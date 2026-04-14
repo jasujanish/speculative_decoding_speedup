@@ -1,0 +1,7 @@
+This folder contains the documentation for our project.
+
+Read `README.md` first.
+
+- In `./litreview/`, we have multiple subfolders. Each subfolder corresponds to a reference paper which may be relevant to our study, and contains the paper's source code (where available) + LaTeX source. There may be additional notes in `./litreview/papername` that we have put in for our own reference.
+- In `./ideas/`, we have multiple Markdown files. Each file corresponds to a different idea for how we wanted to do the project. The ideas are organized in the order of recency. The largest idea number corresponds to the most recent idea.
+- In `./logs/`, we have the chronological research log. Every day, we add a new Markdown file in `./logs/` with the date in the filename formatted as YYYY-MM-DD. Within each file, things that happened earlier in the day are listed at the top. We'll use --- to denote boundaries between distinct discussions. If you add something to the log, please be sure to reference the commit message of the most recent commit (that excludes your current, uncommitted changes) and enclose it within single backticks. Also, you should talk about your log entry in two ways: one more intuitive, geared at people who may not be extremely familiar with the codebase's functions, and one more technical. If you are reporting that you fixed bugs for example, you should say (1) what the problem was, (2) what the problem was in plainer English, (3) what we changed, and (4) what the new behavior now is.
