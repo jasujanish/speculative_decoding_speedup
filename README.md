@@ -1,1 +1,1 @@
-Improve tree-based speculative decoding with dynamic tree construction
+Please read AGENTS.md first before doing anything.
