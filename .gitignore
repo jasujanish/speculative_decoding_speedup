@@ -220,3 +220,6 @@ __marimo__/
 # Claude Harness
 **/.citadel
 **/.planning
+
+# Zip files
+*.Zip
