@@ -1,15 +1,15 @@
-# Qwen3 + AngelSlim Eagle3 on Modal
+# Qwen3 LTD on Modal
 
-This guide explains how to run Learning to Draft (LTD) on Modal using only these two supported model pairs:
+This Modal workflow supports:
 
 - `qwen3_8b` -> `Qwen/Qwen3-8B` + `AngelSlim/Qwen3-8B_eagle3`
 - `qwen3_14b` -> `Qwen/Qwen3-14B` + `AngelSlim/Qwen3-14B_eagle3`
 
-The Modal entrypoint for this workflow is [modal_qwen3.py](./modal_qwen3.py).
+The main entrypoint is [modal_qwen3.py](./modal_qwen3.py).
 
-## 1. Prepare your local environment
+## Setup
 
-From the `Learning-to-Draft-main` directory:
+From `Learning-to-Draft-main`:
 
 ```bash
 uv venv .venv/modal
@@ -18,179 +18,189 @@ uv pip install modal
 modal setup
 ```
 
-The Qwen3 and AngelSlim checkpoints used here are public, so this workflow does
-not require Modal secrets just to download or run the models.
-
-Do not export `MODAL_HF_SECRET_NAME` or `MODAL_WANDB_SECRET_NAME` for this
-version of the script. The current Modal app is intentionally deterministic and
-does not auto-discover secrets from local environment variables.
-
-## 2. Download the model weights to Modal
-
-Choose one preset and download its base model plus Eagle3 draft model into the `ltd-qwen3-models` Volume:
+## Download models
 
 ```bash
 modal run modal_qwen3.py::download_models --model-preset qwen3_8b
-```
-
-or
-
-```bash
 modal run modal_qwen3.py::download_models --model-preset qwen3_14b
 ```
 
-The downloaded paths inside Modal will be:
+This caches the base and Eagle3 weights in the `ltd-qwen3-models` Modal volume.
 
-- `/models/Qwen/Qwen3-8B`
-- `/models/AngelSlim/Qwen3-8B_eagle3`
+## Paper-faithful training
 
-or
+`iterative-train` now runs exactly one explicit stage per Modal execution and
+persists progress in `/results/<preset>/iterative/iterative_state.json`.
 
-- `/models/Qwen/Qwen3-14B`
-- `/models/AngelSlim/Qwen3-14B_eagle3`
-
-## 3. Train the LTD size policy
-
-This runs `python -m rl.rl_total` on Modal and stores outputs in the `ltd-qwen3-results` Volume.
-
-Example for Qwen3 8B:
+First check which stage should run next:
 
 ```bash
-modal run modal_qwen3.py::train_size_policy \
-  --model-preset qwen3_8b \
-  --dataset-train humaneval \
-  --total-timesteps 100000
+modal run modal_qwen3.py \
+  --action iterative-status \
+  --model-preset qwen3_14b
 ```
 
-Example for Qwen3 14B:
+Then run that exact stage:
 
 ```bash
-modal run modal_qwen3.py::train_size_policy \
+export WANDB_API_KEY=your_key_here
+
+modal run modal_qwen3.py \
+  --action iterative-train \
   --model-preset qwen3_14b \
-  --dataset-train humaneval \
-  --total-timesteps 100000
+  --current-stage iter0_size \
+  --use-wandb \
+  --wandb-project speculative-decoding-rl \
+  --size-total-timesteps 100000 \
+  --depth-total-timesteps 100000
 ```
 
-Default output directory:
+Defaults:
 
-- `qwen3_8b` -> `/results/qwen3_8b/size`
-- `qwen3_14b` -> `/results/qwen3_14b/size`
+- dataset: `humaneval`
+- train/validation split: deterministic 80/20 split of HumanEval
+- split seed: `42`
+- size-policy initial training: `100000` steps
+- depth-policy initial training: `1000000` steps
+- iterative schedule: `Iter0 size -> Iter0 depth -> Iter1 size -> Iter2 depth -> Iter3 size -> Iter3 depth`
+- PPO: `batch_size=256`, `n_steps=2048`, `n_epochs=20`, `lr=1e-3`
+- size policy: `gamma=0.9`, `pi_arch=[1024, 256]`, `vf_arch=[1024, 256]`
+- depth policy: `gamma=0.999`, `pi_arch=[1024]`, `vf_arch=[1024, 256]`
+- checkpoint save frequency: every `10000` steps
 
-The main saved size-policy checkpoint will be:
+Validation-based checkpoint selection:
 
-- `/results/qwen3_8b/size/ppo_speculative_decoder_controller_rebuttal.zip`
+- after every stage, all saved checkpoints are evaluated on the HumanEval validation split
+- the promoted checkpoint is the one with the highest validation speedup
+- the next stage resumes from that promoted checkpoint
+- each `modal run ... --action iterative-train` invocation requires an explicit `--current-stage`
+- the requested stage must match `next_stage` from `iterative-status`
 
-or
+Training behavior that matches the paper:
 
-- `/results/qwen3_14b/size/ppo_speculative_decoder_controller_rebuttal.zip`
+- initial size policy trains against heuristic draft depths sampled from `[1, 12]`
+- initial depth policy trains against a fixed verification size of `60`
+- co-adaptation stages freeze the partner policy and retrain the current policy
 
-## 4. Train the LTD depth policy
+One paper ambiguity exists: Section 4 says the first co-adaptation update optimizes depth first, but the experiment section labels `Iter1` as size, `Iter2` as depth, and `Iter3` as size. This implementation follows the explicit `Iter1/Iter2/Iter3` schedule from the experiment section because that is the sequence tied to the reported results.
 
-Depth training expects the size-policy checkpoint path. Pass it relative to `/results`.
+## Override hyperparameters
 
-Example for Qwen3 8B:
+The staged Modal command accepts the main paper hyperparameters as flags:
 
 ```bash
-modal run modal_qwen3.py::train_depth_policy \
-  --model-preset qwen3_8b \
-  --dataset-train humaneval \
-  --total-timesteps 100000 \
-  --rl-token-model-path qwen3_8b/size/ppo_speculative_decoder_controller_rebuttal.zip
-```
-
-Example for Qwen3 14B:
-
-```bash
-modal run modal_qwen3.py::train_depth_policy \
+modal run modal_qwen3.py \
+  --action iterative-train \
   --model-preset qwen3_14b \
-  --dataset-train humaneval \
-  --total-timesteps 100000 \
-  --rl-token-model-path qwen3_14b/size/ppo_speculative_decoder_controller_rebuttal.zip
+  --current-stage iter0_size \
+  --size-total-timesteps 100000 \
+  --depth-total-timesteps 1000000 \
+  --batch-size 256 \
+  --n-steps 2048 \
+  --lr 0.001 \
+  --validation-fraction 0.2 \
+  --split-seed 42 \
+  --use-wandb \
+  --wandb-project speculative-decoding-rl
 ```
 
-Default output directory:
+## W&B logging
 
-- `qwen3_8b` -> `/results/qwen3_8b/depth`
-- `qwen3_14b` -> `/results/qwen3_14b/depth`
+Training runs log through the RL subprocesses:
 
-The main saved depth-policy checkpoint will be:
+- SB3/TensorBoard metrics such as `train/loss`, `train/policy_gradient_loss`, `rollout/ep_rew_mean`, `rollout/ep_len_mean`, and timing statistics
+- custom environment metrics such as chosen token budget and rewards
 
-- `/results/qwen3_8b/depth/ppo_speculative_decoder_controller_v1_single_action.zip`
+Validation selection logs are written as separate W&B runs:
 
-or
+- per-checkpoint validation speedup
+- per-checkpoint validation acceptance length
+- for standalone size-policy selection, per-depth sweep metrics across heuristic depths `1..12`
+- final selected checkpoint step for each stage
 
-- `/results/qwen3_14b/depth/ppo_speculative_decoder_controller_v1_single_action.zip`
+## Outputs
 
-## 5. Run the three evaluation modes
+For `model_preset=qwen3_14b`, `iterative-train` writes:
 
-### Baseline Qwen3
+- `/results/qwen3_14b/iterative/split_data/humaneval_train/question.jsonl`
+- `/results/qwen3_14b/iterative/split_data/humaneval_val/question.jsonl`
+- `/results/qwen3_14b/iterative/iter0_size`
+- `/results/qwen3_14b/iterative/iter0_depth`
+- `/results/qwen3_14b/iterative/iter1_size`
+- `/results/qwen3_14b/iterative/iter2_depth`
+- `/results/qwen3_14b/iterative/iter3_size`
+- `/results/qwen3_14b/iterative/iter3_depth`
+- `/results/qwen3_14b/iterative/iterative_state.json`
+
+Each stage directory contains:
+
+- saved PPO checkpoints every `10000` steps
+- `ppo_speculative_decoder_controller_best.zip` from training-reward tracking
+- `validation_selection.json` with all validation scores and the promoted checkpoint
+- the canonical final checkpoint path overwritten with the best validation checkpoint
+
+Final checkpoints for LTD evaluation:
+
+- token model: `/results/<preset>/iterative/iter3_size/ppo_speculative_decoder_controller_rebuttal.zip`
+- depth model: `/results/<preset>/iterative/iter3_depth/ppo_speculative_decoder_controller_v1_single_action.zip`
+
+## Standalone training
+
+Standalone actions are still available:
 
 ```bash
-modal run modal_qwen3.py::evaluate_baseline \
-  --model-preset qwen3_8b \
-  --bench-name gsm8k
+modal run modal_qwen3.py --action train-size --model-preset qwen3_14b
+modal run modal_qwen3.py --action train-depth --model-preset qwen3_14b --token-model-path qwen3_14b/size/ppo_speculative_decoder_controller_rebuttal.zip
 ```
 
-### Eagle3
+Their defaults match the paper for optimizer and architecture settings, but they do not run the full iterative validation-selection workflow. For paper reproduction, use `--action iterative-train`.
+
+## Evaluation
+
+Baseline:
 
 ```bash
-modal run modal_qwen3.py::evaluate_eagle3 \
-  --model-preset qwen3_8b \
-  --bench-name gsm8k
+modal run modal_qwen3.py::evaluate_baseline --model-preset qwen3_14b --bench-name gsm8k
 ```
 
-### LTD
+Eagle3:
+
+```bash
+modal run modal_qwen3.py::evaluate_eagle3 --model-preset qwen3_14b --bench-name gsm8k
+```
+
+LTD:
 
 ```bash
 modal run modal_qwen3.py::evaluate_ltd \
-  --model-preset qwen3_8b \
+  --model-preset qwen3_14b \
   --bench-name gsm8k \
-  --token-model-path qwen3_8b/size/ppo_speculative_decoder_controller_rebuttal.zip \
-  --depth-model-path qwen3_8b/depth/ppo_speculative_decoder_controller_v1_single_action.zip
+  --token-model-path qwen3_14b/iterative/iter3_size/ppo_speculative_decoder_controller_rebuttal.zip \
+  --depth-model-path qwen3_14b/iterative/iter3_depth/ppo_speculative_decoder_controller_v1_single_action.zip
 ```
 
-Replace `qwen3_8b` with `qwen3_14b` to evaluate the 14B preset.
+## Four-dataset benchmark and CSV
 
-The default JSONL output locations are:
+```bash
+modal run modal_qwen3.py \
+  --action benchmark-suite \
+  --model-preset qwen3_14b \
+  --token-model-path qwen3_14b/iterative/iter3_size/ppo_speculative_decoder_controller_rebuttal.zip \
+  --depth-model-path qwen3_14b/iterative/iter3_depth/ppo_speculative_decoder_controller_v1_single_action.zip \
+  --model-label "Qwen3 14B"
+```
 
-- baseline -> `/results/<preset>/eval/baseline/<bench>.jsonl`
-- Eagle3 -> `/results/<preset>/eval/eagle3/<bench>.jsonl`
-- LTD -> `/results/<preset>/eval/ltd/<bench>.jsonl`
+Outputs:
 
-## 6. Inspect outputs in Modal
+- `/results/<preset>/benchmark_outputs/baseline/<dataset>.jsonl`
+- `/results/<preset>/benchmark_outputs/eagle3/<dataset>.jsonl`
+- `/results/<preset>/benchmark_outputs/ltd/<dataset>.jsonl`
+- `/results/<preset>/benchmark_outputs/summary.csv`
 
-Your persistent Modal Volumes are:
-
-- `ltd-qwen3-models`
-- `ltd-qwen3-results`
-
-Useful commands:
+## Inspect Modal volumes
 
 ```bash
 modal volume ls
 modal volume ls ltd-qwen3-results /
-modal volume get ltd-qwen3-results qwen3_8b/eval/ltd/gsm8k.jsonl ./gsm8k_ltd.jsonl
+modal volume get ltd-qwen3-results qwen3_14b/benchmark_outputs/summary.csv ./summary.csv
 ```
-
-## 7. Local shell wrappers
-
-If you want to run the modified LTD scripts outside Modal, the repo entrypoints now accept the Qwen3 presets directly:
-
-```bash
-MODEL_PRESET=qwen3_8b sh train_size.sh 0
-MODEL_PRESET=qwen3_8b sh train_depth.sh 0
-MODEL_PRESET=qwen3_8b sh eval.sh /path/to/depth.zip /path/to/size.zip
-```
-
-The Qwen3 evaluation scripts also accept:
-
-- `--model-preset qwen3_8b`
-- `--model-preset qwen3_14b`
-
-## 8. What changed in this repo
-
-- Fixed the broken Qwen3 loader in `eagle/model/ea_model.py`
-- Added a shared Qwen3 preset registry in `qwen3_model_presets.py`
-- Added preset support to Qwen3 evaluation and RL training scripts
-- Made `wandb` logging opt-in for RL training
-- Added `modal_qwen3.py` for download, training, and evaluation on Modal

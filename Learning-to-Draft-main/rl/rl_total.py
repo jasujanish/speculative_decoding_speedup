@@ -1,7 +1,8 @@
 import sys
 import os
+import shutil
+import json
 import wandb
-from wandb.integration.sb3 import WandbCallback
 # 添加项目根目录到 sys.path，确保可以用绝对路径导入
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if project_root not in sys.path:
@@ -55,6 +56,12 @@ parser.add_argument(
     help="Base directory for the datasets."
 )
 parser.add_argument(
+    "--question_file",
+    type=str,
+    default="",
+    help="Optional JSONL file that overrides the dataset question file.",
+)
+parser.add_argument(
     "--rl_checkpoint_path",
     type=str,
     default="",
@@ -68,20 +75,20 @@ parser.add_argument(
 )
 # =================================================================
 
-parser.add_argument("--n_steps", type=int, default=128)
-parser.add_argument("--gamma", type=float, default=0.99)
-parser.add_argument("--target_kl", type=float, default=0.02)
-parser.add_argument("--batch_size", type=int, default=64)
-parser.add_argument("--n_epochs", type=int, default=1)
-parser.add_argument("--lr", type=float, default=3e-4, help="Initial learning rate for the optimizer.")
+parser.add_argument("--n_steps", type=int, default=2048)
+parser.add_argument("--gamma", type=float, default=0.9)
+parser.add_argument("--target_kl", type=float, default=None)
+parser.add_argument("--batch_size", type=int, default=256)
+parser.add_argument("--n_epochs", type=int, default=20)
+parser.add_argument("--lr", type=float, default=1e-3, help="Initial learning rate for the optimizer.")
 parser.add_argument("--total_timesteps", type=int, default=256, help="Total number of timesteps for training.")
 parser.add_argument("--warmup_timesteps", type=int, default=10, help="Number of warmup timesteps for the learning rate schedule.")
 parser.add_argument("--eval_freq", type=int, default=10000, help="Frequency (in timesteps) to run evaluation.")
 parser.add_argument("--save_path", type=str, default="./")
-parser.add_argument("--ent_coef", type=float, default=0)
+parser.add_argument("--ent_coef", type=float, default=0.01)
 parser.add_argument("--dataset_train", type=str, default="humaneval")
-parser.add_argument('--pi_arch', type=int, nargs='+', default=[512, 256], help="Policy network (pi) architecture. Example: --pi_arch 512 256")
-parser.add_argument('--vf_arch', type=int, nargs='+', default=[1024, 512], help="Value network (vf) architecture. Example: --vf_arch 1024 512")
+parser.add_argument('--pi_arch', type=int, nargs='+', default=[1024, 256], help="Policy network (pi) architecture. Example: --pi_arch 1024 256")
+parser.add_argument('--vf_arch', type=int, nargs='+', default=[1024, 256], help="Value network (vf) architecture. Example: --vf_arch 1024 256")
 parser.add_argument("--use_dyn_depth", action="store_true")
 parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging.")
 parser.add_argument(
@@ -89,6 +96,12 @@ parser.add_argument(
     type=str,
     default="speculative-decoding-rl",
     help="Weights & Biases project name.",
+)
+parser.add_argument(
+    "--wandb_run_name",
+    type=str,
+    default="",
+    help="Optional Weights & Biases run name.",
 )
 
 args=parser.parse_args()
@@ -109,40 +122,77 @@ def adawm_schedule(initial_lr: float, warmup_steps: int, total_timesteps: int):
             return initial_lr * (1 - decay_progress)
     return func
 
+
+def resolve_question_file() -> str:
+    """Resolve the JSONL file used for RL training prompts.
+
+    Returns:
+        The question JSONL path.
+    """
+    if args.question_file:
+        return args.question_file
+    return os.path.join(args.data_dir, args.dataset_train, "question.jsonl")
+
 class CustomTensorboardCallback(BaseCallback):
     """
     一个自定义的回调函数，用于在每个步骤中直接向 Weights & Biases (wandb) 记录详细信息。
     同时也保留了按频率保存模型的功能。
     """
-    def __init__(self, verbose=0, save_freq=args.eval_freq, save_path=args.save_path):
+    def __init__(
+        self,
+        verbose: int = 0,
+        save_freq: int = args.eval_freq,
+        save_path: str = args.save_path,
+        log_freq: int = args.eval_freq,
+    ) -> None:
+        """Initialize the checkpoint and logging callback.
+
+        Args:
+            verbose: Callback verbosity.
+            save_freq: Checkpoint frequency in environment steps.
+            save_path: Directory for saved checkpoints.
+            log_freq: Weights & Biases logging frequency in steps.
+        """
         super().__init__(verbose)
         self.save_freq = save_freq
         self.save_path = save_path
+        self.log_freq = log_freq
         self.last_saved_timestep = 0
+        self.last_logged_timestep = 0
+        self.best_mean_reward = float("-inf")
+        self.best_model_path = ""
+        self.best_model_step = 0
 
     def _on_step(self) -> bool:
-        if "infos" in self.locals and self.locals["infos"]:
-            for info in self.locals["infos"]:
-                log_data = {}
-                
-                if "token_right" in info:
-                    log_data["custom/token_right"] = info["token_right"]
-                if "t_draft" in info:
-                    log_data["custom/t_draft"] = info["t_draft"]
-                if "total_token_chosen_action" in info:
-                    log_data["custom/total_token_chosen_action"] = info["total_token_chosen_action"]
-                if "depth_chosen" in info:
-                    log_data["custom/random_depth"] = info["depth_chosen"]
-                if "current_seq_len" in info:
-                    log_data["custom/current_seq_len"] = info["current_seq_len"]
-                if "reward_current_step" in info:
-                    log_data["custom/reward_current_step"] = info["reward_current_step"]
+        """Handle periodic metric logging and checkpointing.
 
-                if log_data:
-                    if args.use_wandb:
-                        wandb.log(log_data, step=self.num_timesteps)
-
+        Returns:
+            Whether training should continue.
+        """
         current_timesteps = self.num_timesteps
+        if (
+            args.use_wandb
+            and current_timesteps - self.last_logged_timestep >= self.log_freq
+            and "infos" in self.locals
+            and self.locals["infos"]
+        ):
+            info = self.locals["infos"][-1]
+            log_data = {"custom/checkpoint_step": current_timesteps}
+            if "token_right" in info:
+                log_data["custom/token_right"] = info["token_right"]
+            if "t_draft" in info:
+                log_data["custom/t_draft"] = info["t_draft"]
+            if "total_token_chosen_action" in info:
+                log_data["custom/total_token_chosen_action"] = info["total_token_chosen_action"]
+            if "depth_chosen" in info:
+                log_data["custom/random_depth"] = info["depth_chosen"]
+            if "current_seq_len" in info:
+                log_data["custom/current_seq_len"] = info["current_seq_len"]
+            if "reward_current_step" in info:
+                log_data["custom/reward_current_step"] = info["reward_current_step"]
+            wandb.log(log_data, step=current_timesteps)
+            self.last_logged_timestep = current_timesteps
+
         if self.save_freq > 0 and current_timesteps - self.last_saved_timestep >= self.save_freq:
             save_path = os.path.join(self.save_path, f"ppo_speculative_decoder_controller_step_{current_timesteps}")
             self.model.save(save_path)
@@ -151,6 +201,27 @@ class CustomTensorboardCallback(BaseCallback):
             self.last_saved_timestep = current_timesteps
             
         return True
+
+    def _on_rollout_end(self) -> None:
+        """Persist the best training-reward model seen so far."""
+        mean_reward = self.logger.name_to_value.get("rollout/ep_rew_mean")
+        if mean_reward is None or mean_reward <= self.best_mean_reward:
+            return
+        self.best_mean_reward = float(mean_reward)
+        self.best_model_path = os.path.join(
+            self.save_path,
+            "ppo_speculative_decoder_controller_best",
+        )
+        self.best_model_step = self.num_timesteps
+        self.model.save(self.best_model_path)
+        if args.use_wandb:
+            wandb.log(
+                {
+                    "custom/best_mean_reward": self.best_mean_reward,
+                    "custom/best_model_step": self.best_model_step,
+                },
+                step=self.best_model_step,
+            )
 
 def load_rl_depth_model(model_path):
     if not model_path:
@@ -171,13 +242,35 @@ def init_wandb_run() -> Optional[object]:
     """
     if not args.use_wandb:
         return None
-    return wandb.init(
-        project=args.wandb_project,
-        config=args,
-        sync_tensorboard=True,
-        monitor_gym=True,
-        save_code=True,
-    )
+    api_key = os.environ.get("WANDB_API_KEY", "")
+    last_error: Optional[Exception] = None
+    for init_timeout in (300, 600):
+        try:
+            if api_key:
+                wandb.login(key=api_key, relogin=False)
+            return wandb.init(
+                project=args.wandb_project,
+                config=vars(args),
+                name=args.wandb_run_name or None,
+                sync_tensorboard=True,
+                monitor_gym=True,
+                save_code=True,
+                settings=wandb.Settings(
+                    init_timeout=init_timeout,
+                    start_method="thread",
+                ),
+            )
+        except Exception as exc:
+            last_error = exc
+            print(
+                "W&B init failed for size-policy training "
+                f"(timeout={init_timeout}s): {exc}"
+            )
+    print("Disabling W&B for this size-policy stage after repeated init failures.")
+    args.use_wandb = False
+    if last_error is not None:
+        print(f"Final W&B init error: {last_error}")
+    return None
 
 
 def build_callback_list(custom_tensorboard_callback: BaseCallback) -> CallbackList:
@@ -189,15 +282,32 @@ def build_callback_list(custom_tensorboard_callback: BaseCallback) -> CallbackLi
     Returns:
         The callback list used during PPO training.
     """
-    callbacks: list[BaseCallback] = [custom_tensorboard_callback]
-    if args.use_wandb:
-        callbacks.append(
-            WandbCallback(
-                gradient_save_freq=0,
-                verbose=2,
-            )
-        )
-    return CallbackList(callbacks)
+    return CallbackList([custom_tensorboard_callback])
+
+
+def promote_best_checkpoint(
+    best_model_path: str,
+    save_path: str,
+    final_model_name: str,
+    model_rl: PPO,
+) -> str:
+    """Promote the best available checkpoint to the canonical final model path.
+
+    Args:
+        best_model_path: Path prefix of the best model checkpoint without ``.zip``.
+        save_path: Directory containing the step checkpoints.
+        final_model_name: Canonical final model path without the ``.zip`` suffix.
+        model_rl: Fallback PPO model if no step checkpoint exists.
+
+    Returns:
+        The final promoted checkpoint path including the ``.zip`` suffix.
+    """
+    final_zip_path = f"{final_model_name}.zip"
+    if best_model_path:
+        shutil.copyfile(f"{best_model_path}.zip", final_zip_path)
+        return final_zip_path
+    model_rl.save(final_model_name)
+    return final_zip_path
 
 class SpeculativeDecodingEnv(gym.Env):
     metadata = {'render_modes': [], 'render_fps': 4}
@@ -343,11 +453,29 @@ class SpeculativeDecodingEnv(gym.Env):
         self.time += time.time() - begin_time
 
     def _perform_random_depth_expansion(self):
-        self.random_depth_this_step = random.randint(1, self.max_draft_depth)
-        self.random_depth_this_step=12
+        target_depth = random.randint(1, self.max_draft_depth)
+        self.random_depth_this_step = 0
         self.entropy_exact=[]
         start_depth_time=time.time()
-        for _ in range(self.random_depth_this_step):
+        while True:
+            if self.depth_model is None:
+                if self.random_depth_this_step >= target_depth:
+                    break
+            else:
+                if self.random_depth_this_step >= self.max_draft_depth:
+                    break
+                if self.random_depth_this_step > 0:
+                    with torch.inference_mode():
+                        depth_tensor = torch.tensor(
+                            self._get_obs_depth(),
+                            device="cuda",
+                        )
+                        action_depth = self.depth_model._predict(
+                            depth_tensor.unsqueeze(0),
+                            deterministic=True,
+                        )[0]
+                    if int(action_depth.item()) == 0:
+                        break
             self.model.ea_layer.tree_mask = self.current_tree_mask_for_topk_loop
             current_ea_layer_position_ids = self.len_posi_for_topk_loop + self.model.ea_layer.position_ids.to(self.device)
 
@@ -400,12 +528,7 @@ class SpeculativeDecodingEnv(gym.Env):
                      self.model.ea_layer.tree_mask_init.clone().to(self.device)), dim=3
                 )
             self.cnet_step += 1
-            if self.depth_model!=None and _!=self.random_depth_this_step-1 and _%3==2:
-                with torch.inference_mode():
-                    depth_tensor=torch.tensor(self._get_obs_depth(),device="cuda")
-                    action_depth=self.depth_model._predict(depth_tensor.unsqueeze(0),deterministic=True)[0]
-                    if action_depth==0:
-                        break
+            self.random_depth_this_step += 1
         self.time+=time.time()-start_depth_time
 
     def reset(self, seed=None, options=None):
@@ -626,9 +749,9 @@ if __name__ == '__main__':
     input_ids_list = []
     datasets = [args.dataset_train]
     print(f"Datasets used for RL training: {datasets}")
+    question_file = resolve_question_file()
     for ds1 in datasets:
-        dataset_path = os.path.join(args.data_dir, ds1, "question.jsonl")
-        with open(dataset_path, "r") as f:
+        with open(question_file, "r") as f:
             for line in f:
                 data = json.loads(line)
                 messages = [
@@ -684,7 +807,10 @@ if __name__ == '__main__':
             learning_rate=learning_rate_schedule,
         )
         
-    custom_tensorboard_callback = CustomTensorboardCallback(save_freq=args.eval_freq)
+    custom_tensorboard_callback = CustomTensorboardCallback(
+        save_freq=args.eval_freq,
+        log_freq=args.eval_freq,
+    )
     callback_list = build_callback_list(custom_tensorboard_callback)
     
     print("\nStarting RL training with single action (total_tokens)...")
@@ -694,8 +820,37 @@ if __name__ == '__main__':
         callback=callback_list
     )
     print("RL training finished.")
+    final_model_path = promote_best_checkpoint(
+        best_model_path=custom_tensorboard_callback.best_model_path,
+        save_path=args.save_path,
+        final_model_name=os.path.join(
+            args.save_path,
+            "ppo_speculative_decoder_controller_rebuttal",
+        ),
+        model_rl=model_rl,
+    )
     if run is not None:
+        wandb.log(
+            {
+                "custom/final_saved_step": custom_tensorboard_callback.last_saved_timestep,
+                "custom/final_best_model_step": custom_tensorboard_callback.best_model_step,
+                "custom/final_best_mean_reward": custom_tensorboard_callback.best_mean_reward,
+                "custom/final_model_path": final_model_path,
+            },
+            step=max(custom_tensorboard_callback.best_model_step, args.total_timesteps),
+        )
         run.finish()
-    model_rl.save(os.path.join(args.save_path, "ppo_speculative_decoder_controller_rebuttal"))
-    print("Model saved.")
+    summary_path = os.path.join(args.save_path, "training_summary.json")
+    with open(summary_path, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "last_saved_timestep": custom_tensorboard_callback.last_saved_timestep,
+                "best_model_step": custom_tensorboard_callback.best_model_step,
+                "best_mean_reward": custom_tensorboard_callback.best_mean_reward,
+                "final_model_path": final_model_path,
+            },
+            handle,
+            indent=2,
+        )
+    print(f"Model saved to {final_model_path}.")
     env.close()

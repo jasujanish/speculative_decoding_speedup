@@ -349,6 +349,12 @@ if __name__ == "__main__":
         help="The name of the benchmark question set.",
     )
     parser.add_argument(
+        "--question-file",
+        type=str,
+        default="",
+        help="Optional JSONL file that overrides the benchmark question file.",
+    )
+    parser.add_argument(
         "--question-begin",
         type=int,
         default=0,
@@ -438,7 +444,7 @@ if __name__ == "__main__":
 
         ray.init()
 
-    question_file = f"{parent_dir}/data/{args.bench_name}/question.jsonl"
+    question_file = args.question_file or f"{parent_dir}/data/{args.bench_name}/question.jsonl"
     if args.answer_file:
         answer_file = args.answer_file
     else:
