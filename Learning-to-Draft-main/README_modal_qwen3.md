@@ -1,11 +1,11 @@
 # Qwen3 LTD on Modal
 
-This workflow supports:
+Supported model pairs:
 
 - `qwen3_8b` -> `Qwen/Qwen3-8B` + `AngelSlim/Qwen3-8B_eagle3`
 - `qwen3_14b` -> `Qwen/Qwen3-14B` + `AngelSlim/Qwen3-14B_eagle3`
 
-The main entrypoint is [modal_qwen3.py](./modal_qwen3.py).
+Main entrypoint: [modal_qwen3.py](./modal_qwen3.py)
 
 ## Setup
 
@@ -18,19 +18,19 @@ uv pip install modal
 modal setup
 ```
 
-## Download models
+## Download model weights
 
 ```bash
 modal run modal_qwen3.py::download_models --model-preset qwen3_8b
 modal run modal_qwen3.py::download_models --model-preset qwen3_14b
 ```
 
-This caches the base and Eagle3 weights in the `ltd-qwen3-models` Modal volume.
+Weights are cached in the `ltd-qwen3-models` Modal volume.
 
 ## Iterative training
 
-The paper-faithful workflow runs one explicit stage per Modal execution and
-persists progress in `/results/<preset>/iterative/iterative_state.json`.
+The paper-style workflow runs one explicit stage per Modal execution and stores
+state in `/results/<preset>/iterative/iterative_state.json`.
 
 Check the next required stage:
 
@@ -68,57 +68,115 @@ Stage order:
 Defaults:
 
 - dataset: `humaneval`
-- train/validation split: deterministic 80/20 split of HumanEval
-- split seed: `42`
-- size-policy initial training: `100000` steps
-- depth-policy initial training: `1000000` steps
+- deterministic HumanEval split: 80/20, seed `42`
+- size training: `100000` steps
+- depth training: `1000000` steps
 - PPO: `batch_size=256`, `n_steps=2048`, `n_epochs=20`, `lr=1e-3`
 - size policy: `gamma=0.9`, `pi_arch=[1024, 256]`, `vf_arch=[1024, 256]`
 - depth policy: `gamma=0.999`, `pi_arch=[1024]`, `vf_arch=[1024, 256]`
 - checkpoint frequency: every `10000` timesteps
 
-## Local logging and checkpoints
+## Stage outputs
 
-Each stage directory now stores local files only. No W&B integration is used.
+Each stage directory stores local files only:
 
-For a stage like `/results/qwen3_14b/iterative/iter0_size`, expect:
-
-- `training_metrics.jsonl`: step, rollout, checkpoint, and best-model events from PPO
-- `training_summary.json`: latest saved step, best training-reward step, canonical final checkpoint path, metrics log path
-- `validation_metrics.jsonl`: one record per validation candidate checkpoint plus the selected result
-- `validation_selection.json`: all validation scores and the promoted checkpoint
-- `ppo_speculative_decoder_controller_step_<N>.zip`: periodic saved checkpoints
+- `training_metrics.jsonl`: PPO step, rollout, checkpoint, and best-model events
+- `training_summary.json`: latest checkpoint step, best training-reward step, canonical final checkpoint, metrics log path
+- `validation_metrics.jsonl`: one record per validation candidate plus the selected checkpoint
+- `validation_selection.json`: final validation summary and promoted checkpoint
+- `ppo_speculative_decoder_controller_step_<N>.zip`: periodic checkpoints
 - `ppo_speculative_decoder_controller_best.zip`: best checkpoint by training reward
 - canonical promoted checkpoint:
   - size stage: `ppo_speculative_decoder_controller_rebuttal.zip`
   - depth stage: `ppo_speculative_decoder_controller_v1_single_action.zip`
 
-Validation-based checkpoint selection:
-
-- after each stage, every saved checkpoint is evaluated on the HumanEval validation split
-- the promoted checkpoint is the one with the highest validation speedup
-- the next stage resumes from that promoted checkpoint
+Validation selection is always based on the HumanEval validation split. The
+checkpoint with the highest validation speedup is promoted and used by the next
+stage.
 
 ## Final LTD checkpoints
 
-After `iter3_size` and `iter4_depth` complete, use:
+After `iter3_size` and `iter4_depth` complete:
 
 - token model: `/results/<preset>/iterative/iter3_size/ppo_speculative_decoder_controller_rebuttal.zip`
 - depth model: `/results/<preset>/iterative/iter4_depth/ppo_speculative_decoder_controller_v1_single_action.zip`
 
-## Standalone training
+## Four-dataset benchmark and CSV
 
-Standalone actions still work:
+```bash
+modal run modal_qwen3.py \
+  --action benchmark-suite \
+  --model-preset qwen3_14b \
+  --token-model-path qwen3_14b/iterative/iter3_size/ppo_speculative_decoder_controller_rebuttal.zip \
+  --depth-model-path qwen3_14b/iterative/iter4_depth/ppo_speculative_decoder_controller_v1_single_action.zip \
+  --model-label "Qwen3 14B"
+```
+
+Outputs:
+
+- `/results/<preset>/benchmark_outputs/baseline/<dataset>.jsonl`
+- `/results/<preset>/benchmark_outputs/eagle3/<dataset>.jsonl`
+- `/results/<preset>/benchmark_outputs/ltd/<dataset>.jsonl`
+- `/results/<preset>/benchmark_outputs/summary.csv`
+
+## Download result files
+
+`modal volume get` downloads directories recursively when the remote path is a
+folder.
+
+Inspect first:
+
+```bash
+modal volume ls ltd-qwen3-results /
+modal volume ls ltd-qwen3-results qwen3_14b
+modal volume ls ltd-qwen3-results qwen3_14b/iterative
+```
+
+Download one stage:
+
+```bash
+modal volume get ltd-qwen3-results qwen3_14b/iterative/iter0_size ./iter0_size
+```
+
+Download the full iterative training tree:
+
+```bash
+modal volume get ltd-qwen3-results qwen3_14b/iterative ./qwen3_14b_iterative
+```
+
+Download all benchmark outputs:
+
+```bash
+modal volume get ltd-qwen3-results qwen3_14b/benchmark_outputs ./qwen3_14b_benchmark_outputs
+```
+
+Download every result file for a preset:
+
+```bash
+modal volume get ltd-qwen3-results qwen3_14b ./qwen3_14b_results
+```
+
+Download a single file:
+
+```bash
+modal volume get ltd-qwen3-results qwen3_14b/iterative/iter0_size/validation_selection.json ./validation_selection.json
+```
+
+Official Modal CLI reference:
+
+- https://modal.com/docs/reference/cli/volume
+
+## Standalone training
 
 ```bash
 modal run modal_qwen3.py --action train-size --model-preset qwen3_14b
 modal run modal_qwen3.py --action train-depth --model-preset qwen3_14b --token-model-path qwen3_14b/size/ppo_speculative_decoder_controller_rebuttal.zip
 ```
 
-These write the same local training files and checkpoints, but they do not run
-the iterative validation-selection workflow.
+These write the same local logs and checkpoints, but they do not run the full
+iterative validation-selection workflow.
 
-## Evaluation
+## Standalone Evaluation
 
 Baseline:
 
@@ -140,30 +198,4 @@ modal run modal_qwen3.py::evaluate_ltd \
   --bench-name gsm8k \
   --token-model-path qwen3_14b/iterative/iter3_size/ppo_speculative_decoder_controller_rebuttal.zip \
   --depth-model-path qwen3_14b/iterative/iter4_depth/ppo_speculative_decoder_controller_v1_single_action.zip
-```
-
-## Four-dataset benchmark and CSV
-
-```bash
-modal run modal_qwen3.py \
-  --action benchmark-suite \
-  --model-preset qwen3_14b \
-  --token-model-path qwen3_14b/iterative/iter3_size/ppo_speculative_decoder_controller_rebuttal.zip \
-  --depth-model-path qwen3_14b/iterative/iter4_depth/ppo_speculative_decoder_controller_v1_single_action.zip \
-  --model-label "Qwen3 14B"
-```
-
-Outputs:
-
-- `/results/<preset>/benchmark_outputs/baseline/<dataset>.jsonl`
-- `/results/<preset>/benchmark_outputs/eagle3/<dataset>.jsonl`
-- `/results/<preset>/benchmark_outputs/ltd/<dataset>.jsonl`
-- `/results/<preset>/benchmark_outputs/summary.csv`
-
-## Inspect Modal volumes
-
-```bash
-modal volume ls ltd-qwen3-results /
-modal volume ls ltd-qwen3-results qwen3_14b/iterative
-modal volume get ltd-qwen3-results qwen3_14b/iterative/iter0_size/training_summary.json ./training_summary.json
 ```

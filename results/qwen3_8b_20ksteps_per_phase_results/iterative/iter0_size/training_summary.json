@@ -1,0 +1,7 @@
+{
+  "last_saved_timestep": 20000,
+  "best_model_step": 0,
+  "best_mean_reward": -Infinity,
+  "final_model_path": "/results/qwen3_8b/iterative/iter0_size/ppo_speculative_decoder_controller_rebuttal.zip",
+  "metrics_log_path": "/results/qwen3_8b/iterative/iter0_size/training_metrics.jsonl"
+}

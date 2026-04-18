@@ -1,0 +1,29 @@
+{
+  "stage_name": "iter1_size",
+  "policy_type": "size",
+  "baseline_path": "/results/qwen3_8b/iterative/validation/baseline/humaneval.jsonl",
+  "validation_question_file": "/results/qwen3_8b/iterative/split_data/humaneval_val/question.jsonl",
+  "fixed_depth_model_path": "/results/qwen3_8b/iterative/iter0_depth/ppo_speculative_decoder_controller_v1_single_action.zip",
+  "best_result": {
+    "checkpoint_path": "/results/qwen3_8b/iterative/iter1_size/ppo_speculative_decoder_controller_step_20000.zip",
+    "checkpoint_step": 20000,
+    "speedup": 1.6601674177512544,
+    "tau": 4.08582326764145
+  },
+  "candidate_results": [
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter1_size/ppo_speculative_decoder_controller_step_10000.zip",
+      "checkpoint_step": 10000,
+      "speedup": 1.6593491354790784,
+      "tau": 4.126451612903225
+    },
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter1_size/ppo_speculative_decoder_controller_step_20000.zip",
+      "checkpoint_step": 20000,
+      "speedup": 1.6601674177512544,
+      "tau": 4.08582326764145
+    }
+  ],
+  "validation_metrics_log_path": "/results/qwen3_8b/iterative/iter1_size/validation_metrics.jsonl",
+  "promoted_checkpoint_path": "/results/qwen3_8b/iterative/iter1_size/ppo_speculative_decoder_controller_rebuttal.zip"
+}
