@@ -12,7 +12,6 @@ from statistics import mean
 from typing import Any
 
 import modal
-import wandb
 
 from qwen3_model_presets import model_cache_dir, resolve_model_paths
 
@@ -28,7 +27,7 @@ ITERATIVE_STAGE_ORDER = (
     "iter1_size",
     "iter2_depth",
     "iter3_size",
-    "iter3_depth",
+    "iter4_depth",
 )
 VALIDATION_QUESTION_END = 100000
 MODELS_VOLUME = modal.Volume.from_name("ltd-qwen3-models", create_if_missing=True)
@@ -48,7 +47,6 @@ image = (
         "numpy==1.26.4",
         "sentencepiece==0.1.99",
         "protobuf==3.19.0",
-        "wandb",
         "gymnasium==1.1.1",
         "stable_baselines3==2.7.0",
         "tensorboard",
@@ -82,7 +80,6 @@ def build_runtime_env(extra_env: dict[str, str] | None = None) -> dict[str, str]
     env["HF_HOME"] = str(REMOTE_MODELS_DIR / ".hf")
     env["PYTHONPATH"] = str(REMOTE_PROJECT_DIR)
     env["TOKENIZERS_PARALLELISM"] = "false"
-    env["WANDB_DIR"] = str(REMOTE_RESULTS_DIR / "wandb")
     if extra_env:
         env.update(extra_env)
     return env
@@ -232,6 +229,19 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def append_jsonl_record(path: Path, payload: dict[str, Any]) -> None:
+    """Append one JSON record to a JSONL file.
+
+    Args:
+        path: JSONL file path.
+        payload: Record to append.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload))
+        handle.write("\n")
+
+
 def iterative_state_path(root_dir: Path) -> Path:
     """Return the iterative-training state file path.
 
@@ -349,6 +359,59 @@ def build_iterative_state(
     }
 
 
+def rename_stage_identifier(stage_name: str) -> str:
+    """Normalize legacy iterative stage names.
+
+    Args:
+        stage_name: Stage identifier stored in state.
+
+    Returns:
+        The normalized stage identifier.
+    """
+    if stage_name == "iter3_depth":
+        return "iter4_depth"
+    return stage_name
+
+
+def migrate_iterative_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Migrate persisted iterative state to the latest stage naming.
+
+    Args:
+        state: Persisted iterative-training state.
+
+    Returns:
+        The migrated state payload.
+    """
+    state["stage_order"] = [
+        rename_stage_identifier(stage_name)
+        for stage_name in state.get("stage_order", ITERATIVE_STAGE_ORDER)
+    ]
+    state["completed_stages"] = [
+        rename_stage_identifier(stage_name)
+        for stage_name in state.get("completed_stages", [])
+    ]
+    state["stage_outputs"] = {
+        rename_stage_identifier(stage_name): output_dir
+        for stage_name, output_dir in state.get("stage_outputs", {}).items()
+    }
+    state["promoted_checkpoints"] = {
+        rename_stage_identifier(stage_name): checkpoint_path
+        for stage_name, checkpoint_path in state.get("promoted_checkpoints", {}).items()
+    }
+    state["last_completed_stage"] = rename_stage_identifier(
+        state.get("last_completed_stage", "")
+    )
+    state["next_stage"] = rename_stage_identifier(state.get("next_stage", ""))
+    if "iter3_depth" in state:
+        state["iter4_depth"] = state.pop("iter3_depth")
+    if "final_depth_model_path" not in state and "iter4_depth" in state.get(
+        "promoted_checkpoints",
+        {},
+    ):
+        state["final_depth_model_path"] = state["promoted_checkpoints"]["iter4_depth"]
+    return state
+
+
 def load_or_create_iterative_state(
     model_preset: str,
     dataset_train: str,
@@ -382,7 +445,7 @@ def load_or_create_iterative_state(
     ensure_results_dir(root_dir)
     state_file = iterative_state_path(root_dir)
     if state_file.exists():
-        state = read_json(state_file)
+        state = migrate_iterative_state(read_json(state_file))
         expected_values = {
             "model_preset": model_preset,
             "dataset_train": dataset_train,
@@ -406,6 +469,7 @@ def load_or_create_iterative_state(
                 "Existing iterative state does not match the requested "
                 f"configuration. Mismatched fields: {mismatch_text}."
             )
+        write_json(state_file, state)
         return root_dir, state
     state = build_iterative_state(
         model_preset=model_preset,
@@ -478,7 +542,7 @@ def stage_dependencies(state: dict[str, Any], root_dir: Path, stage_name: str) -
         return promoted["iter1_size"], promoted["iter0_depth"]
     if stage_name == "iter3_size":
         return promoted["iter2_depth"], promoted["iter1_size"]
-    if stage_name == "iter3_depth":
+    if stage_name == "iter4_depth":
         return promoted["iter3_size"], promoted["iter2_depth"]
     raise ValueError(f"Unsupported iterative stage: {stage_name}")
 
@@ -487,9 +551,6 @@ def run_iterative_stage(
     state: dict[str, Any],
     root_dir: Path,
     stage_name: str,
-    use_wandb: bool,
-    wandb_project: str,
-    wandb_env: dict[str, str],
 ) -> dict[str, Any]:
     """Run one iterative-training stage and update state metadata.
 
@@ -497,9 +558,6 @@ def run_iterative_stage(
         state: Iterative-training state payload.
         root_dir: Root directory for iterative-training artifacts.
         stage_name: Stage identifier to execute.
-        use_wandb: Whether W&B logging is enabled.
-        wandb_project: W&B project name.
-        wandb_env: Environment variables for remote W&B auth.
 
     Returns:
         The updated state payload.
@@ -523,11 +581,7 @@ def run_iterative_stage(
                 question_file=train_question_file,
                 depth_model_path=fixed_checkpoint,
                 rl_checkpoint_path=resume_checkpoint,
-                use_wandb=use_wandb,
-                wandb_project=wandb_project,
-                wandb_run_name=f"{state['model_preset']}-{stage_name}",
             ),
-            extra_env=wandb_env,
         )
         promoted_checkpoint = select_best_size_checkpoint(
             model_preset=state["model_preset"],
@@ -535,8 +589,6 @@ def run_iterative_stage(
             stage_dir=output_dir,
             validation_question_file=validation_question_file,
             root_dir=root_dir,
-            use_wandb=use_wandb,
-            wandb_project=wandb_project,
             fixed_depth_model_path=fixed_checkpoint,
         )
     else:
@@ -552,11 +604,7 @@ def run_iterative_stage(
                 question_file=train_question_file,
                 rl_token_model_path=fixed_checkpoint,
                 rl_checkpoint_path=resume_checkpoint,
-                use_wandb=use_wandb,
-                wandb_project=wandb_project,
-                wandb_run_name=f"{state['model_preset']}-{stage_name}",
             ),
-            extra_env=wandb_env,
         )
         promoted_checkpoint = select_best_depth_checkpoint(
             model_preset=state["model_preset"],
@@ -564,8 +612,6 @@ def run_iterative_stage(
             stage_dir=output_dir,
             validation_question_file=validation_question_file,
             root_dir=root_dir,
-            use_wandb=use_wandb,
-            wandb_project=wandb_project,
             fixed_token_model_path=fixed_checkpoint,
         )
 
@@ -577,8 +623,8 @@ def run_iterative_stage(
     state["done"] = state["next_stage"] == ""
     if "iter3_size" in state["promoted_checkpoints"]:
         state["final_token_model_path"] = state["promoted_checkpoints"]["iter3_size"]
-    if "iter3_depth" in state["promoted_checkpoints"]:
-        state["final_depth_model_path"] = state["promoted_checkpoints"]["iter3_depth"]
+    if "iter4_depth" in state["promoted_checkpoints"]:
+        state["final_depth_model_path"] = state["promoted_checkpoints"]["iter4_depth"]
     return state
 
 
@@ -777,68 +823,6 @@ def promote_checkpoint(source_path: Path, destination_path: Path) -> str:
     return str(destination_path)
 
 
-def maybe_start_wandb_run(
-    use_wandb: bool,
-    project: str,
-    run_name: str,
-    config: dict[str, Any],
-) -> Any | None:
-    """Start an optional W&B run for validation logging.
-
-    Args:
-        use_wandb: Whether W&B logging is enabled.
-        project: W&B project name.
-        run_name: W&B run name.
-        config: Run config.
-
-    Returns:
-        The active run or ``None``.
-    """
-    if not use_wandb:
-        return None
-    return wandb.init(
-        project=project,
-        name=run_name,
-        config=config,
-        reinit=True,
-        job_type="validation-selection",
-        settings=wandb.Settings(init_timeout=300),
-    )
-
-
-def finalize_wandb_run(run: Any | None) -> None:
-    """Finish an optional Weights & Biases run.
-
-    Args:
-        run: The active run to finish.
-    """
-    if run is not None:
-        run.finish()
-
-
-def build_wandb_env(wandb_api_key: str) -> dict[str, str]:
-    """Build the Weights & Biases environment overrides.
-
-    Args:
-        wandb_api_key: The API key forwarded to the remote container.
-
-    Returns:
-        Environment variables for W&B authentication.
-    """
-    return {"WANDB_API_KEY": wandb_api_key} if wandb_api_key else {}
-
-
-def apply_wandb_env(wandb_api_key: str) -> None:
-    """Apply W&B authentication settings to the current process.
-
-    Args:
-        wandb_api_key: Optional W&B API key forwarded from the local entrypoint.
-    """
-    if not wandb_api_key:
-        return
-    os.environ["WANDB_API_KEY"] = wandb_api_key
-
-
 def build_train_size_command(
     model_preset: str,
     dataset_train: str,
@@ -850,9 +834,6 @@ def build_train_size_command(
     question_file: str = "",
     depth_model_path: str = "",
     rl_checkpoint_path: str = "",
-    use_wandb: bool = False,
-    wandb_project: str = "speculative-decoding-rl",
-    wandb_run_name: str = "",
 ) -> list[str]:
     """Build the subprocess command for size-policy training.
 
@@ -867,9 +848,6 @@ def build_train_size_command(
         question_file: Optional JSONL file used for training prompts.
         depth_model_path: Optional fixed depth-policy checkpoint path.
         rl_checkpoint_path: Optional size-policy resume checkpoint path.
-        use_wandb: Whether to enable Weights & Biases logging.
-        wandb_project: Weights & Biases project name.
-        wandb_run_name: Optional Weights & Biases run name.
 
     Returns:
         The subprocess command.
@@ -920,16 +898,6 @@ def build_train_size_command(
         command.extend(
             ["--rl_checkpoint_path", resolve_results_path(rl_checkpoint_path)]
         )
-    if use_wandb:
-        command.extend(
-            [
-                "--use_wandb",
-                "--wandb_project",
-                wandb_project,
-                "--wandb_run_name",
-                wandb_run_name or f"{model_preset}-size",
-            ]
-        )
     return command
 
 
@@ -944,9 +912,6 @@ def build_train_depth_command(
     question_file: str = "",
     rl_token_model_path: str = "",
     rl_checkpoint_path: str = "",
-    use_wandb: bool = False,
-    wandb_project: str = "speculative-decoding-rl",
-    wandb_run_name: str = "",
 ) -> list[str]:
     """Build the subprocess command for depth-policy training.
 
@@ -961,9 +926,6 @@ def build_train_depth_command(
         question_file: Optional JSONL file used for training prompts.
         rl_token_model_path: Optional size-policy checkpoint path.
         rl_checkpoint_path: Optional depth-policy resume checkpoint path.
-        use_wandb: Whether to enable Weights & Biases logging.
-        wandb_project: Weights & Biases project name.
-        wandb_run_name: Optional Weights & Biases run name.
 
     Returns:
         The subprocess command.
@@ -1012,16 +974,6 @@ def build_train_depth_command(
     if rl_checkpoint_path:
         command.extend(
             ["--rl_checkpoint_path", resolve_results_path(rl_checkpoint_path)]
-        )
-    if use_wandb:
-        command.extend(
-            [
-                "--use_wandb",
-                "--wandb_project",
-                wandb_project,
-                "--wandb_run_name",
-                wandb_run_name or f"{model_preset}-depth",
-            ]
         )
     return command
 
@@ -1078,10 +1030,6 @@ def train_size_policy(
     depth_model_path: str = "",
     rl_checkpoint_path: str = "",
     save_subdir: str = "",
-    use_wandb: bool = False,
-    wandb_project: str = "speculative-decoding-rl",
-    wandb_run_name: str = "",
-    wandb_api_key: str = "",
 ) -> str:
     """Train the LTD size policy on Modal.
 
@@ -1098,10 +1046,6 @@ def train_size_policy(
         rl_checkpoint_path: Optional size-policy checkpoint path used to resume
             training from an earlier stage.
         save_subdir: Optional results subdirectory under ``/results``.
-        use_wandb: Whether to enable Weights & Biases logging.
-        wandb_project: Weights & Biases project name.
-        wandb_run_name: Optional Weights & Biases run name.
-        wandb_api_key: Optional Weights & Biases API key for remote auth.
 
     Returns:
         The output directory containing the trained policy.
@@ -1119,12 +1063,9 @@ def train_size_policy(
         question_file=question_file,
         depth_model_path=depth_model_path,
         rl_checkpoint_path=rl_checkpoint_path,
-        use_wandb=use_wandb,
-        wandb_project=wandb_project,
-        wandb_run_name=wandb_run_name,
     )
 
-    run_command(command, extra_env=build_wandb_env(wandb_api_key))
+    run_command(command)
     RESULTS_VOLUME.commit()
     return str(output_dir)
 
@@ -1149,10 +1090,6 @@ def train_depth_policy(
     rl_token_model_path: str = "",
     rl_checkpoint_path: str = "",
     save_subdir: str = "",
-    use_wandb: bool = False,
-    wandb_project: str = "speculative-decoding-rl",
-    wandb_run_name: str = "",
-    wandb_api_key: str = "",
 ) -> str:
     """Train the LTD depth policy on Modal.
 
@@ -1169,10 +1106,6 @@ def train_depth_policy(
         rl_checkpoint_path: Optional depth-policy checkpoint path relative to
             ``/results`` or absolute in the remote container.
         save_subdir: Optional results subdirectory under ``/results``.
-        use_wandb: Whether to enable Weights & Biases logging.
-        wandb_project: Weights & Biases project name.
-        wandb_run_name: Optional Weights & Biases run name.
-        wandb_api_key: Optional Weights & Biases API key for remote auth.
 
     Returns:
         The output directory containing the trained policy.
@@ -1190,12 +1123,9 @@ def train_depth_policy(
         question_file=question_file,
         rl_token_model_path=rl_token_model_path,
         rl_checkpoint_path=rl_checkpoint_path,
-        use_wandb=use_wandb,
-        wandb_project=wandb_project,
-        wandb_run_name=wandb_run_name,
     )
 
-    run_command(command, extra_env=build_wandb_env(wandb_api_key))
+    run_command(command)
     RESULTS_VOLUME.commit()
     return str(output_dir)
 
@@ -1221,9 +1151,6 @@ def iterative_train(
     validation_fraction: float = 0.2,
     split_seed: int = 42,
     output_subdir: str = "",
-    use_wandb: bool = False,
-    wandb_project: str = "speculative-decoding-rl",
-    wandb_api_key: str = "",
 ) -> dict[str, str]:
     """Run one pending iterative-training stage on Modal.
 
@@ -1244,9 +1171,6 @@ def iterative_train(
         validation_fraction: Fraction of HumanEval used for validation.
         split_seed: Random seed for the HumanEval train-validation split.
         output_subdir: Optional results root under ``/results``.
-        use_wandb: Whether to enable Weights & Biases logging.
-        wandb_project: Weights & Biases project name.
-        wandb_api_key: Optional Weights & Biases API key for remote auth.
 
     Returns:
         The updated iterative-training state.
@@ -1271,8 +1195,6 @@ def iterative_train(
     if state["done"]:
         RESULTS_VOLUME.commit()
         return state
-    apply_wandb_env(wandb_api_key)
-    wandb_env = build_wandb_env(wandb_api_key)
     expected_stage = next_pending_stage(state)
     if not current_stage:
         raise ValueError(
@@ -1289,9 +1211,6 @@ def iterative_train(
         state=state,
         root_dir=root_dir,
         stage_name=stage_name,
-        use_wandb=use_wandb,
-        wandb_project=wandb_project,
-        wandb_env=wandb_env,
     )
     write_json(iterative_state_path(root_dir), state)
     RESULTS_VOLUME.commit()
@@ -1473,7 +1392,7 @@ def evaluate_size_candidate(
     """
     validation_dir = stage_dir / "validation"
     ensure_results_dir(validation_dir)
-    step = parse_checkpoint_step(candidate_path)
+    step = checkpoint_step_for_candidate(stage_dir, candidate_path)
     candidate_name = candidate_path.stem
     if fixed_depth_model_path:
         answer_path = validation_dir / f"{candidate_name}.jsonl"
@@ -1595,8 +1514,6 @@ def select_best_size_checkpoint(
     stage_dir: Path,
     validation_question_file: str,
     root_dir: Path,
-    use_wandb: bool,
-    wandb_project: str,
     fixed_depth_model_path: str = "",
 ) -> str:
     """Select the best size-policy checkpoint by validation speedup.
@@ -1607,8 +1524,6 @@ def select_best_size_checkpoint(
         stage_dir: Stage output directory.
         validation_question_file: HumanEval validation split JSONL path.
         root_dir: Root directory for iterative-training artifacts.
-        use_wandb: Whether to log validation metrics to W&B.
-        wandb_project: W&B project name.
         fixed_depth_model_path: Optional fixed depth-policy checkpoint path.
 
     Returns:
@@ -1620,60 +1535,46 @@ def select_best_size_checkpoint(
         root_dir=root_dir,
     )
     results: list[dict[str, Any]] = []
-    run = maybe_start_wandb_run(
-        use_wandb=use_wandb,
-        project=wandb_project,
-        run_name=f"{model_preset}-{stage_name}-validation",
-        config={
-            "model_preset": model_preset,
-            "stage_name": stage_name,
-            "policy_type": "size",
-            "validation_question_file": validation_question_file,
-            "fixed_depth_model_path": fixed_depth_model_path,
-        },
-    )
-    try:
-        for candidate_path in list_candidate_checkpoints(stage_dir):
-            metrics = evaluate_size_candidate(
-                model_preset=model_preset,
-                candidate_path=candidate_path,
-                validation_question_file=validation_question_file,
-                baseline_path=baseline_path,
-                stage_dir=stage_dir,
-                fixed_depth_model_path=fixed_depth_model_path,
-            )
-            results.append(metrics)
-            if run is not None:
-                log_data: dict[str, Any] = {
-                    "validation/speedup": metrics["speedup"],
-                    "validation/tau": metrics["tau"],
-                }
-                for detail in metrics.get("depth_sweep", []):
-                    depth_value = int(detail["depth"])
-                    log_data[f"validation/depth_{depth_value}_speedup"] = detail["speedup"]
-                    log_data[f"validation/depth_{depth_value}_tau"] = detail["tau"]
-                wandb.log(log_data, step=metrics["checkpoint_step"])
-        if not results:
-            raise ValueError(f"No candidate size checkpoints found in {stage_dir}.")
-        best_result = max(
-            results,
-            key=lambda item: (item["speedup"], item["tau"], item["checkpoint_step"]),
+    metrics_log_path = stage_dir / "validation_metrics.jsonl"
+    for candidate_path in list_candidate_checkpoints(stage_dir):
+        metrics = evaluate_size_candidate(
+            model_preset=model_preset,
+            candidate_path=candidate_path,
+            validation_question_file=validation_question_file,
+            baseline_path=baseline_path,
+            stage_dir=stage_dir,
+            fixed_depth_model_path=fixed_depth_model_path,
         )
-        if run is not None:
-            wandb.log(
-                {
-                    "validation/best_speedup": best_result["speedup"],
-                    "validation/best_tau": best_result["tau"],
-                    "validation/best_checkpoint_step": best_result["checkpoint_step"],
-                },
-                step=best_result["checkpoint_step"],
-            )
-    finally:
-        finalize_wandb_run(run)
+        results.append(metrics)
+        append_jsonl_record(
+            metrics_log_path,
+            {
+                "event": "candidate",
+                "stage_name": stage_name,
+                "policy_type": "size",
+                **metrics,
+            },
+        )
+    if not results:
+        raise ValueError(f"No candidate size checkpoints found in {stage_dir}.")
+    best_result = max(
+        results,
+        key=lambda item: (item["speedup"], item["tau"], item["checkpoint_step"]),
+    )
 
     promoted_path = promote_checkpoint(
         source_path=Path(best_result["checkpoint_path"]),
         destination_path=Path(size_policy_checkpoint_path(stage_dir)),
+    )
+    append_jsonl_record(
+        metrics_log_path,
+        {
+            "event": "selected",
+            "stage_name": stage_name,
+            "policy_type": "size",
+            **best_result,
+            "promoted_checkpoint_path": promoted_path,
+        },
     )
     summary_path = stage_dir / "validation_selection.json"
     summary_payload = {
@@ -1684,6 +1585,7 @@ def select_best_size_checkpoint(
         "fixed_depth_model_path": fixed_depth_model_path,
         "best_result": best_result,
         "candidate_results": results,
+        "validation_metrics_log_path": str(metrics_log_path),
         "promoted_checkpoint_path": promoted_path,
     }
     summary_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
@@ -1696,8 +1598,6 @@ def select_best_depth_checkpoint(
     stage_dir: Path,
     validation_question_file: str,
     root_dir: Path,
-    use_wandb: bool,
-    wandb_project: str,
     fixed_token_model_path: str = "",
 ) -> str:
     """Select the best depth-policy checkpoint by validation speedup.
@@ -1708,8 +1608,6 @@ def select_best_depth_checkpoint(
         stage_dir: Stage output directory.
         validation_question_file: HumanEval validation split JSONL path.
         root_dir: Root directory for iterative-training artifacts.
-        use_wandb: Whether to log validation metrics to W&B.
-        wandb_project: W&B project name.
         fixed_token_model_path: Optional fixed size-policy checkpoint path.
 
     Returns:
@@ -1721,58 +1619,46 @@ def select_best_depth_checkpoint(
         root_dir=root_dir,
     )
     results: list[dict[str, Any]] = []
-    run = maybe_start_wandb_run(
-        use_wandb=use_wandb,
-        project=wandb_project,
-        run_name=f"{model_preset}-{stage_name}-validation",
-        config={
-            "model_preset": model_preset,
-            "stage_name": stage_name,
-            "policy_type": "depth",
-            "validation_question_file": validation_question_file,
-            "fixed_token_model_path": fixed_token_model_path,
-        },
-    )
-    try:
-        for candidate_path in list_candidate_checkpoints(stage_dir):
-            metrics = evaluate_depth_candidate(
-                model_preset=model_preset,
-                candidate_path=candidate_path,
-                validation_question_file=validation_question_file,
-                baseline_path=baseline_path,
-                stage_dir=stage_dir,
-                fixed_token_model_path=fixed_token_model_path,
-            )
-            results.append(metrics)
-            if run is not None:
-                wandb.log(
-                    {
-                        "validation/speedup": metrics["speedup"],
-                        "validation/tau": metrics["tau"],
-                    },
-                    step=metrics["checkpoint_step"],
-                )
-        if not results:
-            raise ValueError(f"No candidate depth checkpoints found in {stage_dir}.")
-        best_result = max(
-            results,
-            key=lambda item: (item["speedup"], item["tau"], item["checkpoint_step"]),
+    metrics_log_path = stage_dir / "validation_metrics.jsonl"
+    for candidate_path in list_candidate_checkpoints(stage_dir):
+        metrics = evaluate_depth_candidate(
+            model_preset=model_preset,
+            candidate_path=candidate_path,
+            validation_question_file=validation_question_file,
+            baseline_path=baseline_path,
+            stage_dir=stage_dir,
+            fixed_token_model_path=fixed_token_model_path,
         )
-        if run is not None:
-            wandb.log(
-                {
-                    "validation/best_speedup": best_result["speedup"],
-                    "validation/best_tau": best_result["tau"],
-                    "validation/best_checkpoint_step": best_result["checkpoint_step"],
-                },
-                step=best_result["checkpoint_step"],
-            )
-    finally:
-        finalize_wandb_run(run)
+        results.append(metrics)
+        append_jsonl_record(
+            metrics_log_path,
+            {
+                "event": "candidate",
+                "stage_name": stage_name,
+                "policy_type": "depth",
+                **metrics,
+            },
+        )
+    if not results:
+        raise ValueError(f"No candidate depth checkpoints found in {stage_dir}.")
+    best_result = max(
+        results,
+        key=lambda item: (item["speedup"], item["tau"], item["checkpoint_step"]),
+    )
 
     promoted_path = promote_checkpoint(
         source_path=Path(best_result["checkpoint_path"]),
         destination_path=Path(depth_policy_checkpoint_path(stage_dir)),
+    )
+    append_jsonl_record(
+        metrics_log_path,
+        {
+            "event": "selected",
+            "stage_name": stage_name,
+            "policy_type": "depth",
+            **best_result,
+            "promoted_checkpoint_path": promoted_path,
+        },
     )
     summary_path = stage_dir / "validation_selection.json"
     summary_payload = {
@@ -1783,6 +1669,7 @@ def select_best_depth_checkpoint(
         "fixed_token_model_path": fixed_token_model_path,
         "best_result": best_result,
         "candidate_results": results,
+        "validation_metrics_log_path": str(metrics_log_path),
         "promoted_checkpoint_path": promoted_path,
     }
     summary_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
@@ -2131,8 +2018,6 @@ def main(
     split_seed: int = 42,
     output_subdir: str = "",
     model_label: str = "",
-    use_wandb: bool = False,
-    wandb_project: str = "speculative-decoding-rl",
 ) -> None:
     """Convenience local entrypoint for `modal run modal_qwen3.py`.
 
@@ -2153,8 +2038,6 @@ def main(
         split_seed: HumanEval train-validation split seed.
         output_subdir: Output root under ``/results``.
         model_label: Model label for the summary CSV.
-        use_wandb: Whether to enable Weights & Biases logging.
-        wandb_project: Weights & Biases project name.
     """
     if action == "download-models":
         print(download_models.remote(model_preset=model_preset))
@@ -2177,9 +2060,6 @@ def main(
                 n_steps=n_steps,
                 lr=lr,
                 save_subdir=output_subdir,
-                use_wandb=use_wandb,
-                wandb_project=wandb_project,
-                wandb_api_key=os.environ.get("WANDB_API_KEY", ""),
             )
         )
         return
@@ -2194,9 +2074,6 @@ def main(
                 lr=lr,
                 rl_token_model_path=token_model_path,
                 save_subdir=output_subdir,
-                use_wandb=use_wandb,
-                wandb_project=wandb_project,
-                wandb_api_key=os.environ.get("WANDB_API_KEY", ""),
             )
         )
         return
@@ -2214,9 +2091,6 @@ def main(
                 validation_fraction=validation_fraction,
                 split_seed=split_seed,
                 output_subdir=output_subdir,
-                use_wandb=use_wandb,
-                wandb_project=wandb_project,
-                wandb_api_key=os.environ.get("WANDB_API_KEY", ""),
             )
         )
         return

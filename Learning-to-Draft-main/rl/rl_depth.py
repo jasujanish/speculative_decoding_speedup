@@ -13,7 +13,7 @@ import torch
 import random # Import random for sampling
 import time # Make sure time is imported
 from collections import deque
-from typing import Optional
+from typing import Any
 from eagle.model.ea_model import EaModel
 from eagle.model.kv_cache import initialize_past_key_values
 from eagle.model.utils import *
@@ -23,7 +23,6 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.callbacks import CallbackList
 import argparse
-import wandb
 from transformers import AutoModel, AutoTokenizer
 from qwen3_model_presets import list_model_presets, resolve_model_paths
 
@@ -87,19 +86,6 @@ parser.add_argument("--ent_coef", type=float, default=0.01)
 parser.add_argument("--dataset_train", type=str, default="humaneval")
 parser.add_argument('--pi_arch', type=int, nargs='+', default=[1024], help="Policy network (pi) architecture. Example: --pi_arch 1024")
 parser.add_argument('--vf_arch', type=int, nargs='+', default=[1024, 256], help="Value network (vf) architecture. Example: --vf_arch 1024 256")
-parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging.")
-parser.add_argument(
-    "--wandb_project",
-    type=str,
-    default="speculative-decoding-rl",
-    help="Weights & Biases project name.",
-)
-parser.add_argument(
-    "--wandb_run_name",
-    type=str,
-    default="",
-    help="Optional Weights & Biases run name.",
-)
 args=parser.parse_args()
 args.base_model_path, args.ea_model_path = resolve_model_paths(
     model_preset=args.model_preset,
@@ -128,8 +114,20 @@ def resolve_question_file() -> str:
         return args.question_file
     return os.path.join(args.data_dir, args.dataset_train, "question.jsonl")
 
+
+def append_jsonl_record(path: str, payload: dict[str, Any]) -> None:
+    """Append one JSON record to a JSONL file.
+
+    Args:
+        path: JSONL file path.
+        payload: Record to append.
+    """
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload))
+        handle.write("\n")
+
 class CustomTensorboardCallback(BaseCallback):
-    """Periodic checkpoint and logging callback for depth-policy training."""
+    """Periodic checkpoint and local metrics callback for depth-policy training."""
 
     def __init__(
         self,
@@ -144,7 +142,7 @@ class CustomTensorboardCallback(BaseCallback):
             verbose: Callback verbosity.
             save_freq: Checkpoint frequency in environment steps.
             save_path: Directory for saved checkpoints.
-            log_freq: Weights & Biases logging frequency in steps.
+            log_freq: Local metrics logging frequency in steps.
         """
         super().__init__(verbose)
         self.save_freq = save_freq
@@ -155,6 +153,19 @@ class CustomTensorboardCallback(BaseCallback):
         self.best_mean_reward = float("-inf")
         self.best_model_path = ""
         self.best_model_step = 0
+        self.metrics_log_path = os.path.join(save_path, "training_metrics.jsonl")
+
+    def build_logger_snapshot(self) -> dict[str, float]:
+        """Return the current scalar logger metrics.
+
+        Returns:
+            A JSON-serializable mapping of scalar logger metrics.
+        """
+        snapshot: dict[str, float] = {}
+        for key, value in self.logger.name_to_value.items():
+            if isinstance(value, (int, float)):
+                snapshot[key] = float(value)
+        return snapshot
 
     def _on_step(self) -> bool:
         """Handle periodic metric logging and checkpointing.
@@ -164,32 +175,43 @@ class CustomTensorboardCallback(BaseCallback):
         """
         current_timesteps = self.num_timesteps
         if (
-            args.use_wandb
-            and current_timesteps - self.last_logged_timestep >= self.log_freq
+            current_timesteps - self.last_logged_timestep >= self.log_freq
             and "infos" in self.locals
             and self.locals["infos"]
         ):
             info = self.locals["infos"][-1]
-            log_data = {"custom/checkpoint_step": current_timesteps}
+            log_data: dict[str, Any] = {
+                "event": "step",
+                "timesteps": current_timesteps,
+                "logger": self.build_logger_snapshot(),
+            }
             if "token_right" in info:
-                log_data["custom/token_right"] = info["token_right"]
+                log_data["token_right"] = float(info["token_right"])
             if "t_draft" in info:
-                log_data["custom/t_draft"] = info["t_draft"]
+                log_data["t_draft"] = float(info["t_draft"])
             if "base_reward" in info:
-                log_data["custom/base_reward"] = info["base_reward"]
+                log_data["base_reward"] = float(info["base_reward"])
             if "total_token_chosen_action" in info:
-                log_data["custom/total_token_chosen_action"] = info["total_token_chosen_action"]
-            if "depth_chosen" in info:
-                log_data["custom/random_depth"] = info["depth_chosen"]
+                log_data["total_token_chosen_action"] = int(info["total_token_chosen_action"])
+            if "depth_chosen_action" in info:
+                log_data["depth_chosen_action"] = int(info["depth_chosen_action"])
             if "current_seq_len" in info:
-                log_data["custom/current_seq_len"] = info["current_seq_len"]
+                log_data["current_seq_len"] = int(info["current_seq_len"])
             if "reward_current_step" in info:
-                log_data["custom/reward_current_step"] = info["reward_current_step"]
-            wandb.log(log_data, step=current_timesteps)
+                log_data["reward_current_step"] = float(info["reward_current_step"])
+            append_jsonl_record(self.metrics_log_path, log_data)
             self.last_logged_timestep = current_timesteps
         if self.save_freq > 0 and current_timesteps - self.last_saved_timestep >= self.save_freq:
             save_path = os.path.join(self.save_path, f"ppo_speculative_decoder_controller_step_{current_timesteps}")
             self.model.save(save_path)
+            append_jsonl_record(
+                self.metrics_log_path,
+                {
+                    "event": "checkpoint",
+                    "timesteps": current_timesteps,
+                    "checkpoint_path": f"{save_path}.zip",
+                },
+            )
             if self.verbose > 0:
                 print(f"Saving model to {save_path} at timestep {current_timesteps}")
             self.last_saved_timestep = current_timesteps
@@ -199,6 +221,14 @@ class CustomTensorboardCallback(BaseCallback):
     def _on_rollout_end(self) -> None:
         """Persist the best training-reward model seen so far."""
         mean_reward = self.logger.name_to_value.get("rollout/ep_rew_mean")
+        append_jsonl_record(
+            self.metrics_log_path,
+            {
+                "event": "rollout_end",
+                "timesteps": self.num_timesteps,
+                "logger": self.build_logger_snapshot(),
+            },
+        )
         if mean_reward is None or mean_reward <= self.best_mean_reward:
             return
         self.best_mean_reward = float(mean_reward)
@@ -208,14 +238,15 @@ class CustomTensorboardCallback(BaseCallback):
         )
         self.best_model_step = self.num_timesteps
         self.model.save(self.best_model_path)
-        if args.use_wandb:
-            wandb.log(
-                {
-                    "custom/best_mean_reward": self.best_mean_reward,
-                    "custom/best_model_step": self.best_model_step,
-                },
-                step=self.best_model_step,
-            )
+        append_jsonl_record(
+            self.metrics_log_path,
+            {
+                "event": "best_model",
+                "timesteps": self.best_model_step,
+                "best_mean_reward": self.best_mean_reward,
+                "best_model_path": f"{self.best_model_path}.zip",
+            },
+        )
 
 def load_rl_token_model(model_path):
     # 如果没有提供路径，则返回 None，这样后面就知道要使用默认的 60
@@ -227,45 +258,6 @@ def load_rl_token_model(model_path):
     policy.to("cuda")
     policy.eval()
     return policy
-
-
-def init_wandb_run() -> Optional[object]:
-    """Initialize an optional Weights & Biases run.
-
-    Returns:
-        The active run when enabled, otherwise ``None``.
-    """
-    if not args.use_wandb:
-        return None
-    api_key = os.environ.get("WANDB_API_KEY", "")
-    last_error: Optional[Exception] = None
-    for init_timeout in (300, 600):
-        try:
-            if api_key:
-                wandb.login(key=api_key, relogin=False)
-            return wandb.init(
-                project=args.wandb_project,
-                config=vars(args),
-                name=args.wandb_run_name or None,
-                sync_tensorboard=True,
-                monitor_gym=True,
-                save_code=True,
-                settings=wandb.Settings(
-                    init_timeout=init_timeout,
-                    start_method="thread",
-                ),
-            )
-        except Exception as exc:
-            last_error = exc
-            print(
-                "W&B init failed for depth-policy training "
-                f"(timeout={init_timeout}s): {exc}"
-            )
-    print("Disabling W&B for this depth-policy stage after repeated init failures.")
-    args.use_wandb = False
-    if last_error is not None:
-        print(f"Final W&B init error: {last_error}")
-    return None
 
 
 def build_callback_list(custom_tensorboard_callback: BaseCallback) -> CallbackList:
@@ -780,7 +772,6 @@ class SpeculativeDecodingEnv(gym.Env):
 
 if __name__ == '__main__':
     os.makedirs(args.save_path, exist_ok=True)
-    run = init_wandb_run()
 
     model = EaModel.from_pretrained(
         base_model_path=args.base_model_path,
@@ -878,17 +869,6 @@ if __name__ == '__main__':
         ),
         model_rl=model_rl,
     )
-    if run is not None:
-        wandb.log(
-            {
-                "custom/final_saved_step": custom_tensorboard_callback.last_saved_timestep,
-                "custom/final_best_model_step": custom_tensorboard_callback.best_model_step,
-                "custom/final_best_mean_reward": custom_tensorboard_callback.best_mean_reward,
-                "custom/final_model_path": final_model_path,
-            },
-            step=max(custom_tensorboard_callback.best_model_step, args.total_timesteps),
-        )
-        run.finish()
     summary_path = os.path.join(args.save_path, "training_summary.json")
     with open(summary_path, "w", encoding="utf-8") as handle:
         json.dump(
@@ -897,6 +877,7 @@ if __name__ == '__main__':
                 "best_model_step": custom_tensorboard_callback.best_model_step,
                 "best_mean_reward": custom_tensorboard_callback.best_mean_reward,
                 "final_model_path": final_model_path,
+                "metrics_log_path": custom_tensorboard_callback.metrics_log_path,
             },
             handle,
             indent=2,
