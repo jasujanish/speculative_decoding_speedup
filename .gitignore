@@ -223,3 +223,6 @@ __marimo__/
 
 # Zip files
 *.Zip
+
+# Pt files
+*.pt
