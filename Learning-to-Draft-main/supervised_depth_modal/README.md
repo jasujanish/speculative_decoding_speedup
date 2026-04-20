@@ -42,17 +42,7 @@ modal setup
 ```
 
 ## Download model weights
-
-```bash
-modal run supervised_depth_modal/modal_supervised_depth_qwen3.py \
-  --action download-models \
-  --model-preset qwen3_8b
-```
-
-Supported presets:
-
-- `qwen3_8b` -> `Qwen/Qwen3-8B` + `AngelSlim/Qwen3-8B_eagle3`
-- `qwen3_14b` -> `Qwen/Qwen3-14B` + `AngelSlim/Qwen3-14B_eagle3`
+(Same command as LTD, models are stored in a shared cache)
 
 ## 1. Collect a supervised dataset
 
