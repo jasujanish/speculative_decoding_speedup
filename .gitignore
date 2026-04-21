@@ -226,3 +226,6 @@ __marimo__/
 
 # Pt files
 *.pt
+
+# Large dataset
+results/qwen3_8b_supervisedlearning_60ktimesteps_1epoch/dataset_t60000/dataset.jsonl
