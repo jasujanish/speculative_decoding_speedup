@@ -754,10 +754,10 @@ def collect_depth_dataset(
 def train_depth_policy(
     model_preset: str = "qwen3_8b",
     total_timesteps: int = 20000,
-    optimizer_steps: int = 0,
+    epochs: int = 1,
+    checkpoint_epochs: int = 1,
     batch_size: int = 256,
     lr: float = 1e-3,
-    checkpoint_freq: int = 10000,
     validation_fraction: float = 0.2,
     split_seed: int = 42,
     output_subdir: str = "",
@@ -767,10 +767,10 @@ def train_depth_policy(
     Args:
         model_preset: Supported preset.
         total_timesteps: Environmental interaction budget used for collection.
-        optimizer_steps: Number of optimizer steps. Defaults to ``total_timesteps``.
+        epochs: Number of full passes over the supervised training split.
+        checkpoint_epochs: Checkpoint interval in epochs.
         batch_size: Training batch size.
         lr: Learning rate.
-        checkpoint_freq: Checkpoint frequency in optimizer steps.
         validation_fraction: HumanEval validation split fraction.
         split_seed: HumanEval split seed.
         output_subdir: Optional output override.
@@ -811,10 +811,10 @@ def train_depth_policy(
         dataset_path=dataset_path,
         output_dir=str(stage_dir),
         total_timesteps=total_timesteps,
-        optimizer_steps=optimizer_steps or total_timesteps,
+        epochs=epochs,
+        checkpoint_epochs=checkpoint_epochs,
         batch_size=batch_size,
         lr=lr,
-        checkpoint_freq=checkpoint_freq,
     )
     training_time_seconds = time.time() - training_start_time
     validation_start_time = time.time()
@@ -844,7 +844,9 @@ def train_depth_policy(
             "event": "summary",
             "phase_type": "supervised_depth",
             "total_timesteps": total_timesteps,
-            "optimizer_steps": optimizer_steps or total_timesteps,
+            "epochs": epochs,
+            "checkpoint_epochs": checkpoint_epochs,
+            "optimizer_steps": int(summary.get("optimizer_steps", 0)),
             "total_time_seconds": training_time_seconds + validation_time_seconds,
             "training_time_seconds": training_time_seconds,
             "validation_time_seconds": validation_time_seconds,
@@ -1105,10 +1107,10 @@ def main(
     action: str = "benchmark-suite",
     model_preset: str = "qwen3_8b",
     total_timesteps: int = 20000,
-    optimizer_steps: int = 0,
+    epochs: int = 1,
+    checkpoint_epochs: int = 1,
     batch_size: int = 256,
     lr: float = 1e-3,
-    checkpoint_freq: int = 10000,
     validation_fraction: float = 0.2,
     split_seed: int = 42,
     depth_model_path: str = "",
@@ -1121,10 +1123,10 @@ def main(
         action: Remote action to execute.
         model_preset: Supported preset.
         total_timesteps: Environmental interaction budget.
-        optimizer_steps: Number of optimizer steps.
+        epochs: Number of full passes over the supervised training split.
+        checkpoint_epochs: Checkpoint interval in epochs.
         batch_size: Batch size.
         lr: Learning rate.
-        checkpoint_freq: Checkpoint frequency in optimizer steps.
         validation_fraction: HumanEval validation split fraction.
         split_seed: HumanEval split seed.
         depth_model_path: Supervised depth checkpoint path.
@@ -1150,10 +1152,10 @@ def main(
             train_depth_policy.remote(
                 model_preset=model_preset,
                 total_timesteps=total_timesteps,
-                optimizer_steps=optimizer_steps,
+                epochs=epochs,
+                checkpoint_epochs=checkpoint_epochs,
                 batch_size=batch_size,
                 lr=lr,
-                checkpoint_freq=checkpoint_freq,
                 validation_fraction=validation_fraction,
                 split_seed=split_seed,
                 output_subdir=output_subdir,

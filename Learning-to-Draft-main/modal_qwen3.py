@@ -8,7 +8,7 @@ import random
 import shutil
 import subprocess
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from statistics import mean
 from typing import Any
 
@@ -118,6 +118,58 @@ def resolve_results_path(relative_or_absolute_path: str) -> str:
     if relative_or_absolute_path.startswith("/"):
         return relative_or_absolute_path
     return str(REMOTE_RESULTS_DIR / relative_or_absolute_path)
+
+
+def iterative_root_from_checkpoint_path(checkpoint_path: str) -> str:
+    """Return the iterative result root for one checkpoint path.
+
+    Args:
+        checkpoint_path: Absolute ``/results`` path or path relative to
+            ``/results``.
+
+    Returns:
+        Relative iterative root, or an empty string when the checkpoint is not
+        under an iterative-training directory.
+    """
+    if not checkpoint_path:
+        return ""
+    path_text = checkpoint_path.strip()
+    if path_text.startswith(f"{REMOTE_RESULTS_DIR}/"):
+        path_text = path_text[len(f"{REMOTE_RESULTS_DIR}/") :]
+    parts = [part for part in PurePosixPath(path_text).parts if part not in ("", "/")]
+    if "iterative" not in parts:
+        return ""
+    iterative_index = parts.index("iterative")
+    start_index = 0
+    if "results" in parts:
+        results_index = parts.index("results")
+        if results_index < iterative_index:
+            start_index = results_index + 1
+    return "/".join(parts[start_index : iterative_index + 1])
+
+
+def default_benchmark_output_root(
+    model_preset: str,
+    token_model_path: str,
+    depth_model_path: str,
+) -> str:
+    """Return the default benchmark output root.
+
+    Args:
+        model_preset: Supported Qwen3 preset.
+        token_model_path: Size-policy checkpoint path for LTD.
+        depth_model_path: Depth-policy checkpoint path for LTD.
+
+    Returns:
+        Results subdirectory under ``/results``.
+    """
+    token_iterative_root = iterative_root_from_checkpoint_path(token_model_path)
+    depth_iterative_root = iterative_root_from_checkpoint_path(depth_model_path)
+    if token_iterative_root:
+        return f"{token_iterative_root}/benchmark_outputs"
+    if depth_iterative_root:
+        return f"{depth_iterative_root}/benchmark_outputs"
+    return f"{model_preset}/benchmark_outputs"
 
 
 def run_command(command: list[str], extra_env: dict[str, str] | None = None) -> None:
@@ -2132,7 +2184,9 @@ def benchmark_suite(
         include_ltd: Whether to run the LTD method.
         token_model_path: Size-policy checkpoint path for LTD.
         depth_model_path: Depth-policy checkpoint path for LTD.
-        output_subdir: Output root under ``/results``.
+        output_subdir: Output root under ``/results``. If omitted and an LTD
+            checkpoint path is under an iterative directory, benchmarks are
+            written under that iterative root.
         model_label: Model label for the summary CSV.
 
     Returns:
@@ -2142,7 +2196,11 @@ def benchmark_suite(
         raise ValueError(
             "include_baseline must stay enabled when computing speedups for Eagle3 or LTD."
         )
-    output_root = output_subdir or f"{model_preset}/benchmark_outputs"
+    output_root = output_subdir or default_benchmark_output_root(
+        model_preset=model_preset,
+        token_model_path=token_model_path,
+        depth_model_path=depth_model_path,
+    )
     methods: list[str] = []
 
     for dataset in datasets:

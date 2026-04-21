@@ -1,0 +1,4 @@
+model,method,mt_bench_speedup,mt_bench_tau,gsm8k_speedup,gsm8k_tau,alpaca_speedup,alpaca_tau,qa_speedup,qa_tau,mean_speedup,mean_tau
+Qwen3 8B,Baseline,1.0000,,1.0000,,1.0000,,1.0000,,1.0000,
+Qwen3 8B,Eagle3,2.2232,3.4024,2.2243,3.5800,1.6631,2.9949,1.6692,2.8144,1.9449,3.1979
+Qwen3 8B,Eagle3+SupervisedDepth,2.5365,3.3400,2.5090,3.5404,1.9389,2.9535,1.9513,2.7986,2.2339,3.1581

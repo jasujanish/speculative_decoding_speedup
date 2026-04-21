@@ -1,0 +1,151 @@
+{
+  "stage_name": "iter0_size",
+  "policy_type": "size",
+  "baseline_path": "/results/qwen3_8b/iterative/validation/baseline/humaneval.jsonl",
+  "validation_question_file": "/results/qwen3_8b/iterative/split_data/humaneval_val/question.jsonl",
+  "fixed_depth_model_path": "",
+  "best_result": {
+    "checkpoint_path": "/results/qwen3_8b/iterative/iter0_size/ppo_speculative_decoder_controller_step_10000.zip",
+    "checkpoint_step": 10000,
+    "speedup": 2.2868391201288465,
+    "tau": 4.13902544421528,
+    "depth_sweep": [
+      {
+        "depth": 1.0,
+        "speedup": 2.336842883782291,
+        "tau": 4.136569579288026
+      },
+      {
+        "depth": 2.0,
+        "speedup": 2.272052885005211,
+        "tau": 4.1392487046632125
+      },
+      {
+        "depth": 3.0,
+        "speedup": 2.2746151473961653,
+        "tau": 4.1392487046632125
+      },
+      {
+        "depth": 4.0,
+        "speedup": 2.2537431870045634,
+        "tau": 4.1392487046632125
+      },
+      {
+        "depth": 5.0,
+        "speedup": 2.227919054932141,
+        "tau": 4.1392487046632125
+      },
+      {
+        "depth": 6.0,
+        "speedup": 2.32005711472163,
+        "tau": 4.1392487046632125
+      },
+      {
+        "depth": 7.0,
+        "speedup": 2.3444500488800153,
+        "tau": 4.1392487046632125
+      },
+      {
+        "depth": 8.0,
+        "speedup": 2.225808129843035,
+        "tau": 4.1392487046632125
+      },
+      {
+        "depth": 9.0,
+        "speedup": 2.305236099893889,
+        "tau": 4.1392487046632125
+      },
+      {
+        "depth": 10.0,
+        "speedup": 2.2984644929049263,
+        "tau": 4.1392487046632125
+      },
+      {
+        "depth": 11.0,
+        "speedup": 2.29552274631903,
+        "tau": 4.1392487046632125
+      },
+      {
+        "depth": 12.0,
+        "speedup": 2.2873576508632625,
+        "tau": 4.1392487046632125
+      }
+    ],
+    "validation_draft_model_calls": 209403,
+    "validation_target_model_calls": 23305
+  },
+  "candidate_results": [
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter0_size/ppo_speculative_decoder_controller_step_10000.zip",
+      "checkpoint_step": 10000,
+      "speedup": 2.2868391201288465,
+      "tau": 4.13902544421528,
+      "depth_sweep": [
+        {
+          "depth": 1.0,
+          "speedup": 2.336842883782291,
+          "tau": 4.136569579288026
+        },
+        {
+          "depth": 2.0,
+          "speedup": 2.272052885005211,
+          "tau": 4.1392487046632125
+        },
+        {
+          "depth": 3.0,
+          "speedup": 2.2746151473961653,
+          "tau": 4.1392487046632125
+        },
+        {
+          "depth": 4.0,
+          "speedup": 2.2537431870045634,
+          "tau": 4.1392487046632125
+        },
+        {
+          "depth": 5.0,
+          "speedup": 2.227919054932141,
+          "tau": 4.1392487046632125
+        },
+        {
+          "depth": 6.0,
+          "speedup": 2.32005711472163,
+          "tau": 4.1392487046632125
+        },
+        {
+          "depth": 7.0,
+          "speedup": 2.3444500488800153,
+          "tau": 4.1392487046632125
+        },
+        {
+          "depth": 8.0,
+          "speedup": 2.225808129843035,
+          "tau": 4.1392487046632125
+        },
+        {
+          "depth": 9.0,
+          "speedup": 2.305236099893889,
+          "tau": 4.1392487046632125
+        },
+        {
+          "depth": 10.0,
+          "speedup": 2.2984644929049263,
+          "tau": 4.1392487046632125
+        },
+        {
+          "depth": 11.0,
+          "speedup": 2.29552274631903,
+          "tau": 4.1392487046632125
+        },
+        {
+          "depth": 12.0,
+          "speedup": 2.2873576508632625,
+          "tau": 4.1392487046632125
+        }
+      ],
+      "validation_draft_model_calls": 209403,
+      "validation_target_model_calls": 23305
+    }
+  ],
+  "validation_metrics_log_path": "/results/qwen3_8b/iterative/iter0_size/validation_metrics.jsonl",
+  "promoted_checkpoint_path": "/results/qwen3_8b/iterative/iter0_size/ppo_speculative_decoder_controller_rebuttal.zip"
+}

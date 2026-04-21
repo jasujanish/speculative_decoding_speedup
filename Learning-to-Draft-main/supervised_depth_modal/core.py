@@ -1010,10 +1010,10 @@ def train_supervised_depth_model(
     dataset_path: str,
     output_dir: str,
     total_timesteps: int,
-    optimizer_steps: int,
+    epochs: int,
+    checkpoint_epochs: int = 1,
     batch_size: int = 256,
     lr: float = 1e-3,
-    checkpoint_freq: int = 10000,
     validation_fraction: float = 0.1,
     split_seed: int = 42,
     hidden_dim: int = 1024,
@@ -1024,10 +1024,10 @@ def train_supervised_depth_model(
         dataset_path: Dataset JSONL path.
         output_dir: Training output directory.
         total_timesteps: Environmental-interaction budget tied to the dataset.
-        optimizer_steps: Number of optimizer steps.
+        epochs: Number of full passes over the training split.
+        checkpoint_epochs: Checkpoint interval in epochs.
         batch_size: Batch size.
         lr: Learning rate.
-        checkpoint_freq: Checkpoint interval in optimizer steps.
         validation_fraction: Example-level validation split fraction.
         split_seed: Validation split seed.
         hidden_dim: Hidden layer width.
@@ -1035,6 +1035,10 @@ def train_supervised_depth_model(
     Returns:
         Training summary payload.
     """
+    if epochs < 1:
+        raise ValueError("epochs must be at least 1.")
+    if checkpoint_epochs < 1:
+        raise ValueError("checkpoint_epochs must be at least 1.")
     output_root = Path(output_dir)
     ensure_dir(output_root)
     train_loader, validation_loader, train_size, validation_size = _build_data_loaders(
@@ -1050,70 +1054,55 @@ def train_supervised_depth_model(
     best_validation_loss = math.inf
     best_model_path = output_root / "supervised_depth_model_best.pt"
     metrics_log_path = output_root / "training_metrics.jsonl"
-    train_iterator = iter(train_loader)
     model_parameter_count = count_parameters(model)
     train_examples_seen = 0
+    train_batches_per_epoch = len(train_loader)
+    total_optimizer_steps = epochs * train_batches_per_epoch
+    optimizer_step = 0
 
-    for optimizer_step in range(1, optimizer_steps + 1):
-        try:
-            observations, targets = next(train_iterator)
-        except StopIteration:
-            train_iterator = iter(train_loader)
-            observations, targets = next(train_iterator)
-        train_examples_seen += observations.shape[0]
-        observations = observations.to(device)
-        targets = targets.to(device)
-        model.train()
-        optimizer.zero_grad(set_to_none=True)
-        predictions = model(observations)
-        loss = loss_fn(predictions, targets)
-        loss.backward()
-        optimizer.step()
+    for epoch in range(1, epochs + 1):
+        for batch_index, (observations, targets) in enumerate(train_loader, start=1):
+            optimizer_step += 1
+            train_examples_seen += observations.shape[0]
+            observations = observations.to(device)
+            targets = targets.to(device)
+            model.train()
+            optimizer.zero_grad(set_to_none=True)
+            predictions = model(observations)
+            loss = loss_fn(predictions, targets)
+            loss.backward()
+            optimizer.step()
 
-        if optimizer_step == 1 or optimizer_step % checkpoint_freq == 0 or optimizer_step == optimizer_steps:
-            validation_metrics = _validation_metrics(
-                model=model,
-                data_loader=validation_loader,
-                device=device,
-                loss_fn=loss_fn,
+            should_checkpoint_epoch = (
+                batch_index == train_batches_per_epoch
+                and (epoch % checkpoint_epochs == 0 or epoch == epochs)
             )
-            append_jsonl_record(
-                metrics_log_path,
-                {
-                    "event": "step",
-                    "optimizer_step": optimizer_step,
-                    "train_loss": float(loss.item()),
-                    "validation_loss": float(validation_metrics["loss"]),
-                    "validation_sign_accuracy": float(validation_metrics["sign_accuracy"]),
-                },
-            )
-            checkpoint_path = output_root / f"supervised_depth_model_step_{optimizer_step}.pt"
-            save_supervised_depth_checkpoint(
-                checkpoint_path,
-                model,
-                {
-                    "input_dim": OBSERVATION_DIM,
-                    "hidden_dim": hidden_dim,
-                    "optimizer_step": optimizer_step,
-                    "total_timesteps": total_timesteps,
-                },
-            )
-            append_jsonl_record(
-                metrics_log_path,
-                {
-                    "event": "checkpoint",
-                    "optimizer_step": optimizer_step,
-                    "checkpoint_path": str(checkpoint_path),
-                },
-            )
-            if validation_metrics["loss"] < best_validation_loss:
-                best_validation_loss = validation_metrics["loss"]
+            if optimizer_step == 1 or should_checkpoint_epoch:
+                validation_metrics = _validation_metrics(
+                    model=model,
+                    data_loader=validation_loader,
+                    device=device,
+                    loss_fn=loss_fn,
+                )
+                append_jsonl_record(
+                    metrics_log_path,
+                    {
+                        "event": "step",
+                        "epoch": epoch,
+                        "optimizer_step": optimizer_step,
+                        "train_loss": float(loss.item()),
+                        "validation_loss": float(validation_metrics["loss"]),
+                        "validation_sign_accuracy": float(validation_metrics["sign_accuracy"]),
+                    },
+                )
+                checkpoint_path = output_root / f"supervised_depth_model_step_{optimizer_step}.pt"
                 save_supervised_depth_checkpoint(
-                    best_model_path,
+                    checkpoint_path,
                     model,
                     {
                         "input_dim": OBSERVATION_DIM,
                         "hidden_dim": hidden_dim,
+                        "epoch": epoch,
                         "optimizer_step": optimizer_step,
                         "total_timesteps": total_timesteps,
                     },
@@ -1121,12 +1110,35 @@ def train_supervised_depth_model(
                 append_jsonl_record(
                     metrics_log_path,
                     {
-                        "event": "best_model",
+                        "event": "checkpoint",
+                        "epoch": epoch,
                         "optimizer_step": optimizer_step,
-                        "best_validation_loss": float(best_validation_loss),
-                        "best_model_path": str(best_model_path),
+                        "checkpoint_path": str(checkpoint_path),
                     },
                 )
+                if validation_metrics["loss"] < best_validation_loss:
+                    best_validation_loss = validation_metrics["loss"]
+                    save_supervised_depth_checkpoint(
+                        best_model_path,
+                        model,
+                        {
+                            "input_dim": OBSERVATION_DIM,
+                            "hidden_dim": hidden_dim,
+                            "epoch": epoch,
+                            "optimizer_step": optimizer_step,
+                            "total_timesteps": total_timesteps,
+                        },
+                    )
+                    append_jsonl_record(
+                        metrics_log_path,
+                        {
+                            "event": "best_model",
+                            "epoch": epoch,
+                            "optimizer_step": optimizer_step,
+                            "best_validation_loss": float(best_validation_loss),
+                            "best_model_path": str(best_model_path),
+                        },
+                    )
 
     final_model_path = output_root / "supervised_depth_model.pt"
     if best_model_path.exists():
@@ -1138,17 +1150,21 @@ def train_supervised_depth_model(
             {
                 "input_dim": OBSERVATION_DIM,
                 "hidden_dim": hidden_dim,
-                "optimizer_step": optimizer_steps,
+                "epoch": epochs,
+                "optimizer_step": total_optimizer_steps,
                 "total_timesteps": total_timesteps,
             },
         )
     summary = {
         "dataset_path": dataset_path,
         "total_timesteps": total_timesteps,
-        "optimizer_steps": optimizer_steps,
+        "epochs": epochs,
+        "optimizer_steps": total_optimizer_steps,
+        "train_batches_per_epoch": train_batches_per_epoch,
+        "checkpoint_epochs": checkpoint_epochs,
         "batch_size": batch_size,
         "lr": lr,
-        "checkpoint_freq": checkpoint_freq,
+        "checkpoint_frequency": f"every_{checkpoint_epochs}_epochs",
         "validation_fraction": validation_fraction,
         "split_seed": split_seed,
         "train_examples": train_size,
