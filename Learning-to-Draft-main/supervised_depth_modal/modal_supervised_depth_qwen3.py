@@ -659,6 +659,70 @@ def build_root_dir(model_preset: str, output_subdir: str) -> Path:
     return REMOTE_RESULTS_DIR / (output_subdir or f"{model_preset}/supervised_depth")
 
 
+def policy_path_suffix(policy_variant: str) -> str:
+    """Return the path suffix for a supervised policy variant.
+
+    Args:
+        policy_variant: Policy variant name.
+
+    Returns:
+        Empty string for the base policy, otherwise a variant suffix.
+    """
+    normalized = policy_variant.strip().lower() or "base"
+    return "" if normalized == "base" else f"_{normalized}"
+
+
+def dataset_dir_for_policy(root_dir: Path, total_timesteps: int, policy_variant: str) -> Path:
+    """Return the dataset directory for a policy variant.
+
+    Args:
+        root_dir: Workflow root directory.
+        total_timesteps: Collection budget.
+        policy_variant: Policy variant name.
+
+    Returns:
+        Dataset directory.
+    """
+    return root_dir / f"dataset_t{total_timesteps}{policy_path_suffix(policy_variant)}"
+
+
+def train_dir_for_policy(root_dir: Path, total_timesteps: int, policy_variant: str) -> Path:
+    """Return the training directory for a policy variant.
+
+    Args:
+        root_dir: Workflow root directory.
+        total_timesteps: Collection budget.
+        policy_variant: Policy variant name.
+
+    Returns:
+        Training directory.
+    """
+    return root_dir / f"train_t{total_timesteps}{policy_path_suffix(policy_variant)}"
+
+
+def manifest_matches_policy(
+    manifest: dict[str, Any],
+    total_timesteps: int,
+    policy_variant: str,
+) -> bool:
+    """Return whether a dataset manifest matches the requested run.
+
+    Args:
+        manifest: Dataset manifest.
+        total_timesteps: Requested collection budget.
+        policy_variant: Requested policy variant.
+
+    Returns:
+        Whether the manifest can be reused.
+    """
+    normalized = policy_variant.strip().lower() or "base"
+    manifest_variant = str(manifest.get("policy_variant", "base")).strip().lower() or "base"
+    return (
+        int(manifest.get("total_timesteps", -1)) == total_timesteps
+        and manifest_variant == normalized
+    )
+
+
 @app.function(
     image=image,
     volumes={
@@ -703,6 +767,7 @@ def download_models(model_preset: str = "qwen3_8b") -> dict[str, str]:
 def collect_depth_dataset(
     model_preset: str = "qwen3_8b",
     total_timesteps: int = 20000,
+    policy_variant: str = "base",
     validation_fraction: float = 0.2,
     split_seed: int = 42,
     output_subdir: str = "",
@@ -712,6 +777,7 @@ def collect_depth_dataset(
     Args:
         model_preset: Supported preset.
         total_timesteps: Environmental interaction budget.
+        policy_variant: Supervised policy variant.
         validation_fraction: HumanEval validation split fraction.
         split_seed: HumanEval split seed.
         output_subdir: Optional output override.
@@ -724,11 +790,11 @@ def collect_depth_dataset(
     root_dir = build_root_dir(model_preset, output_subdir)
     ensure_dir(root_dir)
     train_question_file, _ = create_humaneval_split_files(root_dir, validation_fraction, split_seed)
-    dataset_dir = root_dir / f"dataset_t{total_timesteps}"
+    dataset_dir = dataset_dir_for_policy(root_dir, total_timesteps, policy_variant)
     manifest_path = dataset_dir / "dataset_manifest.json"
     if manifest_path.exists():
         manifest = read_json(manifest_path)
-        if int(manifest.get("total_timesteps", -1)) == total_timesteps:
+        if manifest_matches_policy(manifest, total_timesteps, policy_variant):
             return manifest
     base_model_path, ea_model_path = resolve_remote_model_paths(model_preset)
     manifest = collect_supervised_depth_dataset(
@@ -737,6 +803,7 @@ def collect_depth_dataset(
         question_file=train_question_file,
         output_dir=str(dataset_dir),
         total_timesteps=total_timesteps,
+        policy_variant=policy_variant,
     )
     RESULTS_VOLUME.commit()
     return manifest
@@ -756,6 +823,7 @@ def train_depth_policy(
     total_timesteps: int = 20000,
     epochs: int = 1,
     checkpoint_epochs: int = 1,
+    policy_variant: str = "base",
     batch_size: int = 256,
     lr: float = 1e-3,
     validation_fraction: float = 0.2,
@@ -769,6 +837,7 @@ def train_depth_policy(
         total_timesteps: Environmental interaction budget used for collection.
         epochs: Number of full passes over the supervised training split.
         checkpoint_epochs: Checkpoint interval in epochs.
+        policy_variant: Supervised policy variant.
         batch_size: Training batch size.
         lr: Learning rate.
         validation_fraction: HumanEval validation split fraction.
@@ -791,11 +860,15 @@ def train_depth_policy(
         split_seed,
     )
     del train_question_file
-    dataset_dir = root_dir / f"dataset_t{total_timesteps}"
+    dataset_dir = dataset_dir_for_policy(root_dir, total_timesteps, policy_variant)
     manifest_path = dataset_dir / "dataset_manifest.json"
     if manifest_path.exists():
         dataset_manifest = read_json(manifest_path)
-    else:
+    if not manifest_path.exists() or not manifest_matches_policy(
+        dataset_manifest,
+        total_timesteps,
+        policy_variant,
+    ):
         base_model_path, ea_model_path = resolve_remote_model_paths(model_preset)
         dataset_manifest = collect_supervised_depth_dataset(
             base_model_path=base_model_path,
@@ -803,9 +876,10 @@ def train_depth_policy(
             question_file=str(root_dir / "split_data" / "humaneval_train" / "question.jsonl"),
             output_dir=str(dataset_dir),
             total_timesteps=total_timesteps,
+            policy_variant=policy_variant,
         )
     dataset_path = dataset_manifest["dataset_path"]
-    stage_dir = root_dir / f"train_t{total_timesteps}"
+    stage_dir = train_dir_for_policy(root_dir, total_timesteps, policy_variant)
     training_start_time = time.time()
     summary = train_supervised_depth_model(
         dataset_path=dataset_path,
@@ -815,6 +889,7 @@ def train_depth_policy(
         checkpoint_epochs=checkpoint_epochs,
         batch_size=batch_size,
         lr=lr,
+        policy_variant=policy_variant,
     )
     training_time_seconds = time.time() - training_start_time
     validation_start_time = time.time()
@@ -843,6 +918,7 @@ def train_depth_policy(
         {
             "event": "summary",
             "phase_type": "supervised_depth",
+            "policy_variant": policy_variant,
             "total_timesteps": total_timesteps,
             "epochs": epochs,
             "checkpoint_epochs": checkpoint_epochs,
@@ -1109,6 +1185,7 @@ def main(
     total_timesteps: int = 20000,
     epochs: int = 1,
     checkpoint_epochs: int = 1,
+    policy_variant: str = "base",
     batch_size: int = 256,
     lr: float = 1e-3,
     validation_fraction: float = 0.2,
@@ -1125,6 +1202,7 @@ def main(
         total_timesteps: Environmental interaction budget.
         epochs: Number of full passes over the supervised training split.
         checkpoint_epochs: Checkpoint interval in epochs.
+        policy_variant: Supervised policy variant.
         batch_size: Batch size.
         lr: Learning rate.
         validation_fraction: HumanEval validation split fraction.
@@ -1141,6 +1219,7 @@ def main(
             collect_depth_dataset.remote(
                 model_preset=model_preset,
                 total_timesteps=total_timesteps,
+                policy_variant=policy_variant,
                 validation_fraction=validation_fraction,
                 split_seed=split_seed,
                 output_subdir=output_subdir,
@@ -1154,6 +1233,7 @@ def main(
                 total_timesteps=total_timesteps,
                 epochs=epochs,
                 checkpoint_epochs=checkpoint_epochs,
+                policy_variant=policy_variant,
                 batch_size=batch_size,
                 lr=lr,
                 validation_fraction=validation_fraction,

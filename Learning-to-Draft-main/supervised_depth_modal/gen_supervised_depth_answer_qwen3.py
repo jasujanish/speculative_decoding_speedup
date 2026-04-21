@@ -19,7 +19,18 @@ from tqdm import tqdm
 
 from eagle.model.ea_model import EaModel
 from eagle.model.utils import prepare_logits_processor
-from supervised_depth_modal.core import load_supervised_depth_checkpoint, scores_entropy
+from supervised_depth_modal.core import (
+    ENHANCED_POLICY_VARIANT,
+    EOS_LOGPROB_FALLBACK,
+    end_token_logprob,
+    load_supervised_depth_checkpoint,
+    map_target_token_ids_to_draft_ids,
+    normalize_policy_variant,
+    policy_observation_dim,
+    resolve_end_token_ids,
+    score_summary_features,
+    scores_entropy,
+)
 
 
 set_seed(0)
@@ -47,6 +58,15 @@ def patch_depth_runner(model: EaModel, depth_model_path: str) -> None:
     """
     depth_model = load_supervised_depth_checkpoint(depth_model_path, device="cuda")
     model.dyn_depth_ffn = depth_model
+    policy_variant = normalize_policy_variant(
+        str(getattr(depth_model, "policy_variant", "base"))
+    )
+    eos_draft_token_ids = map_target_token_ids_to_draft_ids(
+        model.ea_layer,
+        resolve_end_token_ids(model.get_tokenizer()),
+    )
+    model.ea_layer.supervised_depth_policy_variant = policy_variant
+    model.ea_layer.supervised_depth_eos_draft_token_ids = eos_draft_token_ids
 
     @torch.no_grad()
     def topk_generate_with_supervised_depth(
@@ -118,6 +138,11 @@ def patch_depth_runner(model: EaModel, depth_model_path: str) -> None:
         top = torch.topk(last_p, top_k, dim=-1)
         topk_index, topk_p = top.indices, top.values
         scores = topk_p[0]
+        previous_entropy = scores_entropy(scores)
+        latest_eos_logprob = end_token_logprob(
+            last_p,
+            getattr(self, "supervised_depth_eos_draft_token_ids", []),
+        )
         scores_list.append(scores[None])
         parents_list.append(torch.zeros(1, dtype=torch.long, device=scores.device))
         if self.config.vocab_size == self.config.draft_vocab_size:
@@ -153,10 +178,15 @@ def patch_depth_runner(model: EaModel, depth_model_path: str) -> None:
 
             last_headout = self.lm_head(self.norm(out_hidden[0]))
             last_p = self.logsoftmax(last_headout)
+            latest_eos_logprob = end_token_logprob(
+                last_p,
+                getattr(self, "supervised_depth_eos_draft_token_ids", []),
+            )
             top = torch.topk(last_p, top_k, dim=-1)
             topk_index, topk_p = top.indices, top.values
 
             cu_scores = topk_p + scores[:, None]
+            current_entropy = scores_entropy(cu_scores.flatten())
             topk_cs = torch.topk(cu_scores.view(-1), top_k, dim=-1)
             topk_cs_index, topk_cs_p = topk_cs.indices, topk_cs.values
             scores = topk_cs_p
@@ -176,9 +206,17 @@ def patch_depth_runner(model: EaModel, depth_model_path: str) -> None:
             decision_start = time.time()
             cnet_step += 1
             if dyn_depth_ffn is not None and i != depth - 1:
-                if self._run_dyn_depth_on_cpu(cu_scores, cnet_step, input_ids_shape_len, dyn_depth_ffn):
+                if self._run_dyn_depth_on_cpu(
+                    cu_scores,
+                    cnet_step,
+                    input_ids_shape_len,
+                    dyn_depth_ffn,
+                    previous_entropy,
+                    latest_eos_logprob,
+                ):
                     rl_time += time.time() - decision_start
                     break
+            previous_entropy = current_entropy
             rl_time += time.time() - decision_start
 
         if dyn_token_ffn is not None and obs_tensor is not None:
@@ -260,6 +298,8 @@ def patch_depth_runner(model: EaModel, depth_model_path: str) -> None:
         current_depth: int,
         context_length: int,
         dyn_depth_ffn: torch.nn.Module,
+        previous_entropy: float = 0.0,
+        eos_logprob: float = EOS_LOGPROB_FALLBACK,
     ) -> bool:
         """Return whether drafting should stop at the next depth check.
 
@@ -268,16 +308,30 @@ def patch_depth_runner(model: EaModel, depth_model_path: str) -> None:
             current_depth: Current draft depth.
             context_length: Current prefix length.
             dyn_depth_ffn: Loaded supervised regressor.
+            previous_entropy: Entropy before the latest expansion.
+            eos_logprob: EOS-like log probability from the latest drafter logits.
 
         Returns:
             Whether expansion should stop.
         """
         scores_flat = scores_cpu.flatten().detach().float().cpu()
-        obs = torch.zeros(129, dtype=torch.float32)
+        policy_variant = normalize_policy_variant(
+            str(getattr(dyn_depth_ffn, "policy_variant", "base"))
+        )
+        obs = torch.zeros(policy_observation_dim(policy_variant), dtype=torch.float32)
         obs[: min(100, scores_flat.numel())] = scores_flat[:100]
         obs[100:114] = float(context_length) / 1000.0
         obs[114:128] = float(current_depth) / 10.0
-        obs[128] = scores_entropy(scores_flat)
+        current_entropy = scores_entropy(scores_flat)
+        obs[128] = current_entropy
+        if policy_variant == ENHANCED_POLICY_VARIANT:
+            score_max, score_mean, score_std, score_min = score_summary_features(scores_flat)
+            obs[129] = score_max
+            obs[130] = score_mean
+            obs[131] = score_std
+            obs[132] = score_min
+            obs[133] = current_entropy - previous_entropy
+            obs[134] = eos_logprob
         with torch.inference_mode():
             delta = dyn_depth_ffn(obs.unsqueeze(0).to("cuda"))
         return bool(delta.item() <= 0.0)

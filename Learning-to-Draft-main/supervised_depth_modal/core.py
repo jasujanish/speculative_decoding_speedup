@@ -39,12 +39,18 @@ SYSTEM_PROMPT = (
     "false information."
 )
 OBSERVATION_DIM = 129
+ENHANCED_OBSERVATION_DIM = 135
 MAX_OBS_SCORES = 100
 MAX_SEQUENCE_LENGTH = 1748
 MAX_GENERATED_TOKENS = 256
 DEFAULT_TOTAL_TOKEN = 60
 DEFAULT_TOP_K = 10
 DEFAULT_MAX_DRAFT_DEPTH = 12
+DEFAULT_POLICY_VARIANT = "base"
+ENHANCED_POLICY_VARIANT = "enhanced"
+DEFAULT_HIDDEN_DIMS = (1024,)
+ENHANCED_HIDDEN_DIMS = (1536, 384)
+EOS_LOGPROB_FALLBACK = -100.0
 FLOP_ESTIMATE_MULTIPLIER = 2
 TRAINING_FLOP_ESTIMATE_MULTIPLIER = 6
 
@@ -169,6 +175,144 @@ def scores_entropy(scores: torch.Tensor) -> float:
     return float(entropy.item())
 
 
+def normalize_policy_variant(policy_variant: str) -> str:
+    """Validate and normalize a supervised policy variant.
+
+    Args:
+        policy_variant: Policy variant name.
+
+    Returns:
+        Normalized policy variant.
+    """
+    normalized = policy_variant.strip().lower() or DEFAULT_POLICY_VARIANT
+    if normalized not in {DEFAULT_POLICY_VARIANT, ENHANCED_POLICY_VARIANT}:
+        raise ValueError(
+            f"Unsupported policy_variant '{policy_variant}'. Use "
+            f"'{DEFAULT_POLICY_VARIANT}' or '{ENHANCED_POLICY_VARIANT}'."
+        )
+    return normalized
+
+
+def policy_observation_dim(policy_variant: str) -> int:
+    """Return the observation dimension for a policy variant.
+
+    Args:
+        policy_variant: Policy variant name.
+
+    Returns:
+        Observation dimension.
+    """
+    if normalize_policy_variant(policy_variant) == ENHANCED_POLICY_VARIANT:
+        return ENHANCED_OBSERVATION_DIM
+    return OBSERVATION_DIM
+
+
+def policy_hidden_dims(policy_variant: str, hidden_dim: int = 1024) -> tuple[int, ...]:
+    """Return hidden dimensions for a policy variant.
+
+    Args:
+        policy_variant: Policy variant name.
+        hidden_dim: Base-policy hidden width.
+
+    Returns:
+        Hidden dimensions.
+    """
+    if normalize_policy_variant(policy_variant) == ENHANCED_POLICY_VARIANT:
+        return ENHANCED_HIDDEN_DIMS
+    return (hidden_dim,)
+
+
+def score_summary_features(scores: torch.Tensor | None) -> tuple[float, float, float, float]:
+    """Summarize a score vector.
+
+    Args:
+        scores: Log-score tensor.
+
+    Returns:
+        Max, mean, standard deviation, and min score.
+    """
+    if scores is None or scores.numel() == 0:
+        return 0.0, 0.0, 0.0, 0.0
+    scores_float = scores.flatten().detach().float()
+    return (
+        float(scores_float.max().item()),
+        float(scores_float.mean().item()),
+        float(scores_float.std(unbiased=False).item()),
+        float(scores_float.min().item()),
+    )
+
+
+def resolve_end_token_ids(tokenizer: Any) -> list[int]:
+    """Resolve target-token ids that should be treated as EOS-like.
+
+    Args:
+        tokenizer: Model tokenizer.
+
+    Returns:
+        Unique target-token ids for end-of-sequence style tokens.
+    """
+    token_ids: list[int] = []
+    for token_id in (
+        getattr(tokenizer, "eos_token_id", None),
+        tokenizer.convert_tokens_to_ids("<|eot_id|>") if tokenizer else None,
+        tokenizer.convert_tokens_to_ids("<|endoftext|>") if tokenizer else None,
+    ):
+        if isinstance(token_id, int) and token_id >= 0 and token_id not in token_ids:
+            token_ids.append(token_id)
+    return token_ids
+
+
+def map_target_token_ids_to_draft_ids(ea_layer: Any, target_token_ids: list[int]) -> list[int]:
+    """Map target-token ids to draft-vocabulary ids when needed.
+
+    Args:
+        ea_layer: Eagle draft layer.
+        target_token_ids: Target-model token ids.
+
+    Returns:
+        Draft-vocabulary ids corresponding to the target ids.
+    """
+    if not target_token_ids:
+        return []
+    draft_vocab_size = int(ea_layer.config.draft_vocab_size)
+    if ea_layer.config.vocab_size == ea_layer.config.draft_vocab_size:
+        return [
+            token_id
+            for token_id in target_token_ids
+            if 0 <= token_id < draft_vocab_size
+        ]
+    d2t = ea_layer.d2t.detach().cpu().long()
+    draft_ids = torch.arange(d2t.numel(), dtype=torch.long)
+    mapped_target_ids = draft_ids + d2t
+    matched_ids: list[int] = []
+    for target_token_id in target_token_ids:
+        matches = draft_ids[mapped_target_ids == int(target_token_id)].tolist()
+        for match in matches:
+            if 0 <= int(match) < draft_vocab_size and int(match) not in matched_ids:
+                matched_ids.append(int(match))
+    return matched_ids
+
+
+def end_token_logprob(log_probs: torch.Tensor, draft_token_ids: list[int]) -> float:
+    """Read the largest EOS-like log probability from drafter log probabilities.
+
+    Args:
+        log_probs: Draft-layer log-probability tensor.
+        draft_token_ids: Draft-vocabulary ids for EOS-like tokens.
+
+    Returns:
+        Maximum EOS-like log probability, or a fallback when unavailable.
+    """
+    if not draft_token_ids or log_probs.numel() == 0:
+        return EOS_LOGPROB_FALLBACK
+    vocab_size = log_probs.shape[-1]
+    valid_ids = [token_id for token_id in draft_token_ids if 0 <= token_id < vocab_size]
+    if not valid_ids:
+        return EOS_LOGPROB_FALLBACK
+    selected = log_probs.detach().float().reshape(-1, vocab_size)[:, valid_ids]
+    return float(selected.max().item())
+
+
 def load_prompt_input_ids(
     tokenizer: Any,
     question_file: str,
@@ -210,19 +354,33 @@ def load_prompt_input_ids(
 class SupervisedDepthModel(nn.Module):
     """MLP depth regressor that predicts one-step throughput delta."""
 
-    def __init__(self, input_dim: int = OBSERVATION_DIM, hidden_dim: int = 1024) -> None:
+    def __init__(
+        self,
+        input_dim: int = OBSERVATION_DIM,
+        hidden_dim: int = 1024,
+        hidden_dims: tuple[int, ...] | list[int] | None = None,
+        policy_variant: str = DEFAULT_POLICY_VARIANT,
+    ) -> None:
         """Initialize the regressor.
 
         Args:
             input_dim: Observation dimension.
             hidden_dim: Hidden width.
+            hidden_dims: Optional hidden layer widths.
+            policy_variant: Policy variant name.
         """
         super().__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
-        )
+        self.input_dim = input_dim
+        self.policy_variant = normalize_policy_variant(policy_variant)
+        self.hidden_dims = tuple(hidden_dims or (hidden_dim,))
+        layers: list[nn.Module] = []
+        current_dim = input_dim
+        for width in self.hidden_dims:
+            layers.append(nn.Linear(current_dim, width))
+            layers.append(nn.ReLU())
+            current_dim = width
+        layers.append(nn.Linear(current_dim, 1))
+        self.network = nn.Sequential(*layers)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """Run a forward pass.
@@ -273,10 +431,18 @@ def load_supervised_depth_checkpoint(
     """
     checkpoint = torch.load(model_path, map_location=device)
     metadata = checkpoint.get("metadata", {})
-    model = SupervisedDepthModel(
-        input_dim=int(metadata.get("input_dim", OBSERVATION_DIM)),
-        hidden_dim=int(metadata.get("hidden_dim", 1024)),
+    policy_variant = normalize_policy_variant(
+        str(metadata.get("policy_variant", DEFAULT_POLICY_VARIANT))
     )
+    hidden_dims = metadata.get("hidden_dims")
+    if hidden_dims is None:
+        hidden_dims = [int(metadata.get("hidden_dim", 1024))]
+    model = SupervisedDepthModel(
+        input_dim=int(metadata.get("input_dim", policy_observation_dim(policy_variant))),
+        hidden_dims=tuple(int(width) for width in hidden_dims),
+        policy_variant=policy_variant,
+    )
+    model.metadata = metadata
     model.load_state_dict(checkpoint["state_dict"])
     model.to(device)
     model.eval()
@@ -301,6 +467,7 @@ class DepthStateCollector:
         input_ids_list: list[torch.Tensor],
         total_token_limit: int = DEFAULT_TOTAL_TOKEN,
         max_draft_depth: int = DEFAULT_MAX_DRAFT_DEPTH,
+        policy_variant: str = DEFAULT_POLICY_VARIANT,
     ) -> None:
         """Initialize the collector.
 
@@ -309,13 +476,20 @@ class DepthStateCollector:
             input_ids_list: Training prompts.
             total_token_limit: Fixed verification size.
             max_draft_depth: Maximum draft depth explored during collection.
+            policy_variant: Supervised policy variant.
         """
         self.model = model
         self.device = next(model.parameters()).device
+        self.policy_variant = normalize_policy_variant(policy_variant)
+        self.observation_dim = policy_observation_dim(self.policy_variant)
         self.input_ids_list = [tensor.to(self.device) for tensor in input_ids_list]
         self.total_token_limit = total_token_limit
         self.max_draft_depth = max_draft_depth
         self.ea_layer_top_k = self.model.ea_layer.top_k
+        self.eos_draft_token_ids = map_target_token_ids_to_draft_ids(
+            self.model.ea_layer,
+            resolve_end_token_ids(self.model.get_tokenizer()),
+        )
         self.current_input_ids: torch.Tensor | None = None
         self.input_len = 0
         self.new_token_count = 0
@@ -327,6 +501,9 @@ class DepthStateCollector:
         self.prompt_rng = random.Random(42)
         self.kv_layout: list[list[KVCopyLayout]] = []
         self._build_kv_layout_cache = False
+        self.previous_entropy_for_obs = 0.0
+        self.current_entropy_for_obs = 0.0
+        self.eos_logprob_for_obs = EOS_LOGPROB_FALLBACK
 
     def _build_kv_layout(self) -> None:
         """Build a stable mapping for cloning KV cache state."""
@@ -437,6 +614,9 @@ class DepthStateCollector:
         self.scores_list.append(current_scores[None])
         self.current_scores_for_topk_loop_obs = current_scores
         self.cu_scores_for_obs = None
+        self.previous_entropy_for_obs = 0.0
+        self.current_entropy_for_obs = scores_entropy(current_scores)
+        self.eos_logprob_for_obs = end_token_logprob(last_p, self.eos_draft_token_ids)
         self.parents_list.append(torch.zeros(1, dtype=torch.long, device=current_scores.device))
         if self.model.ea_layer.config.vocab_size == self.model.ea_layer.config.draft_vocab_size:
             self.ss_token_list.append(topk_index)
@@ -560,6 +740,9 @@ class DepthStateCollector:
         topk_cs = torch.topk(cu_scores.view(-1), self.ea_layer_top_k, dim=-1)
         topk_cs_index_new, topk_cs_p_new = topk_cs.indices, topk_cs.values
         self.cu_scores_for_obs = cu_scores.flatten()
+        self.previous_entropy_for_obs = self.current_entropy_for_obs
+        self.current_entropy_for_obs = scores_entropy(self.cu_scores_for_obs)
+        self.eos_logprob_for_obs = end_token_logprob(last_p, self.eos_draft_token_ids)
         self.current_scores_for_topk_loop_obs = topk_cs_p_new
         self.current_topk_cs_index_for_loop = topk_cs_index_new
 
@@ -596,7 +779,7 @@ class DepthStateCollector:
         Returns:
             Numpy observation vector.
         """
-        obs = np.zeros(OBSERVATION_DIM, dtype=np.float32)
+        obs = np.zeros(self.observation_dim, dtype=np.float32)
         position_ids = self.current_input_ids.shape[1] / 1000.0
         draft_position_ids = self.cnet_step / 10.0
         if self.cu_scores_for_obs is not None:
@@ -606,6 +789,17 @@ class DepthStateCollector:
         obs[114:128] = draft_position_ids
         if self.cu_scores_for_obs is not None:
             obs[128] = scores_entropy(self.cu_scores_for_obs.flatten())
+        if self.policy_variant == ENHANCED_POLICY_VARIANT:
+            summary_scores = self.cu_scores_for_obs
+            if summary_scores is None:
+                summary_scores = self.current_scores_for_topk_loop_obs
+            score_max, score_mean, score_std, score_min = score_summary_features(summary_scores)
+            obs[129] = score_max
+            obs[130] = score_mean
+            obs[131] = score_std
+            obs[132] = score_min
+            obs[133] = self.current_entropy_for_obs - self.previous_entropy_for_obs
+            obs[134] = self.eos_logprob_for_obs
         return obs
 
     def _finalize_tree(
@@ -801,6 +995,17 @@ class DepthStateCollector:
                     "stop_accept_length": float(current_metrics["accept_length"]),
                     "next_accept_length": float(next_metrics["accept_length"]),
                 }
+                if self.policy_variant == ENHANCED_POLICY_VARIANT:
+                    record.update(
+                        {
+                            "score_max": float(observation[129]),
+                            "score_mean": float(observation[130]),
+                            "score_std": float(observation[131]),
+                            "score_min": float(observation[132]),
+                            "entropy_delta": float(observation[133]),
+                            "eos_logprob_from_last_drafter_logits": float(observation[134]),
+                        }
+                    )
                 records.append(record)
                 self.examples_collected += 1
                 progress_bar.update(1)
@@ -829,7 +1034,8 @@ class DepthStateCollector:
             "target_model_calls": self.total_target_model_calls,
             "fixed_total_token": self.total_token_limit,
             "max_draft_depth": self.max_draft_depth,
-            "observation_dim": OBSERVATION_DIM,
+            "observation_dim": self.observation_dim,
+            "policy_variant": self.policy_variant,
         }
         return records, metadata
 
@@ -842,6 +1048,7 @@ def collect_supervised_depth_dataset(
     total_timesteps: int,
     total_token: int = DEFAULT_TOTAL_TOKEN,
     max_draft_depth: int = DEFAULT_MAX_DRAFT_DEPTH,
+    policy_variant: str = DEFAULT_POLICY_VARIANT,
 ) -> dict[str, Any]:
     """Collect a supervised depth dataset and persist it to disk.
 
@@ -853,10 +1060,12 @@ def collect_supervised_depth_dataset(
         total_timesteps: Maximum number of collected decision states.
         total_token: Fixed verification size.
         max_draft_depth: Maximum explored draft depth.
+        policy_variant: Supervised policy variant.
 
     Returns:
         Dataset manifest payload.
     """
+    policy_variant = normalize_policy_variant(policy_variant)
     collection_start_time = time.time()
     output_root = Path(output_dir)
     ensure_dir(output_root)
@@ -880,6 +1089,7 @@ def collect_supervised_depth_dataset(
         input_ids_list=input_ids_list,
         total_token_limit=total_token,
         max_draft_depth=max_draft_depth,
+        policy_variant=policy_variant,
     )
     records, metadata = collector.collect(total_timesteps=total_timesteps)
     target_model_parameters = count_parameters(model.base_model)
@@ -937,6 +1147,7 @@ def _build_data_loaders(
     batch_size: int,
     validation_fraction: float,
     split_seed: int,
+    expected_input_dim: int | None = None,
 ) -> tuple[DataLoader, DataLoader, int, int]:
     """Build train and validation loaders.
 
@@ -945,12 +1156,18 @@ def _build_data_loaders(
         batch_size: Minibatch size.
         validation_fraction: Validation fraction.
         split_seed: Shuffle seed.
+        expected_input_dim: Optional expected observation width.
 
     Returns:
         Train loader, validation loader, train size and validation size.
     """
     records = read_jsonl(Path(dataset_path))
     observations, targets = _dataset_to_tensors(records)
+    if expected_input_dim is not None and observations.shape[1] != expected_input_dim:
+        raise ValueError(
+            f"Dataset observation dimension {observations.shape[1]} does not match "
+            f"expected dimension {expected_input_dim}."
+        )
     indices = list(range(len(records)))
     random.Random(split_seed).shuffle(indices)
     validation_count = max(1, int(round(len(indices) * validation_fraction)))
@@ -1017,6 +1234,7 @@ def train_supervised_depth_model(
     validation_fraction: float = 0.1,
     split_seed: int = 42,
     hidden_dim: int = 1024,
+    policy_variant: str = DEFAULT_POLICY_VARIANT,
 ) -> dict[str, Any]:
     """Train the supervised depth regressor.
 
@@ -1031,10 +1249,12 @@ def train_supervised_depth_model(
         validation_fraction: Example-level validation split fraction.
         split_seed: Validation split seed.
         hidden_dim: Hidden layer width.
+        policy_variant: Supervised policy variant.
 
     Returns:
         Training summary payload.
     """
+    policy_variant = normalize_policy_variant(policy_variant)
     if epochs < 1:
         raise ValueError("epochs must be at least 1.")
     if checkpoint_epochs < 1:
@@ -1046,9 +1266,16 @@ def train_supervised_depth_model(
         batch_size=batch_size,
         validation_fraction=validation_fraction,
         split_seed=split_seed,
+        expected_input_dim=policy_observation_dim(policy_variant),
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = SupervisedDepthModel(hidden_dim=hidden_dim).to(device)
+    input_dim = policy_observation_dim(policy_variant)
+    hidden_dims = policy_hidden_dims(policy_variant, hidden_dim=hidden_dim)
+    model = SupervisedDepthModel(
+        input_dim=input_dim,
+        hidden_dims=hidden_dims,
+        policy_variant=policy_variant,
+    ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     loss_fn = nn.SmoothL1Loss()
     best_validation_loss = math.inf
@@ -1100,8 +1327,10 @@ def train_supervised_depth_model(
                     checkpoint_path,
                     model,
                     {
-                        "input_dim": OBSERVATION_DIM,
-                        "hidden_dim": hidden_dim,
+                        "input_dim": input_dim,
+                        "hidden_dim": hidden_dims[0],
+                        "hidden_dims": list(hidden_dims),
+                        "policy_variant": policy_variant,
                         "epoch": epoch,
                         "optimizer_step": optimizer_step,
                         "total_timesteps": total_timesteps,
@@ -1122,8 +1351,10 @@ def train_supervised_depth_model(
                         best_model_path,
                         model,
                         {
-                            "input_dim": OBSERVATION_DIM,
-                            "hidden_dim": hidden_dim,
+                            "input_dim": input_dim,
+                            "hidden_dim": hidden_dims[0],
+                            "hidden_dims": list(hidden_dims),
+                            "policy_variant": policy_variant,
                             "epoch": epoch,
                             "optimizer_step": optimizer_step,
                             "total_timesteps": total_timesteps,
@@ -1148,8 +1379,10 @@ def train_supervised_depth_model(
             final_model_path,
             model,
             {
-                "input_dim": OBSERVATION_DIM,
-                "hidden_dim": hidden_dim,
+                "input_dim": input_dim,
+                "hidden_dim": hidden_dims[0],
+                "hidden_dims": list(hidden_dims),
+                "policy_variant": policy_variant,
                 "epoch": epochs,
                 "optimizer_step": total_optimizer_steps,
                 "total_timesteps": total_timesteps,
@@ -1157,6 +1390,9 @@ def train_supervised_depth_model(
         )
     summary = {
         "dataset_path": dataset_path,
+        "policy_variant": policy_variant,
+        "input_dim": input_dim,
+        "hidden_dims": list(hidden_dims),
         "total_timesteps": total_timesteps,
         "epochs": epochs,
         "optimizer_steps": total_optimizer_steps,
