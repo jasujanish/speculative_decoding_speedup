@@ -1,0 +1,17 @@
+{
+  "dataset_path": "/results/qwen3_8b/supervised_depth/dataset_t60000/dataset.jsonl",
+  "total_timesteps": 60000,
+  "optimizer_steps": 60000,
+  "batch_size": 256,
+  "lr": 0.001,
+  "checkpoint_freq": 10000,
+  "validation_fraction": 0.1,
+  "split_seed": 42,
+  "train_examples": 54000,
+  "validation_examples": 6000,
+  "best_validation_loss": 0.006381618884702523,
+  "final_model_path": "/results/qwen3_8b/supervised_depth/train_t60000/supervised_depth_model.pt",
+  "best_model_path": "/results/qwen3_8b/supervised_depth/train_t60000/supervised_depth_model_best.pt",
+  "metrics_log_path": "/results/qwen3_8b/supervised_depth/train_t60000/training_metrics.jsonl",
+  "promoted_checkpoint_path": "/results/qwen3_8b/supervised_depth/train_t60000/supervised_depth_model.pt"
+}

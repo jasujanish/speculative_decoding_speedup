@@ -1,0 +1,14 @@
+{
+  "total_timesteps": 60000,
+  "collected_examples": 60000,
+  "episodes_started": 94,
+  "draft_model_calls": 65001,
+  "target_model_calls": 125094,
+  "fixed_total_token": 60,
+  "max_draft_depth": 12,
+  "observation_dim": 129,
+  "dataset_path": "/results/qwen3_8b/supervised_depth/dataset_t60000/dataset.jsonl",
+  "question_file": "/results/qwen3_8b/supervised_depth/split_data/humaneval_train/question.jsonl",
+  "base_model_path": "/models/Qwen/Qwen3-8B",
+  "ea_model_path": "/models/AngelSlim/Qwen3-8B_eagle3"
+}
