@@ -126,6 +126,42 @@ def append_jsonl_record(path: str, payload: dict[str, Any]) -> None:
         handle.write(json.dumps(payload))
         handle.write("\n")
 
+
+def write_json(path: str, payload: dict[str, Any]) -> None:
+    """Write one JSON file.
+
+    Args:
+        path: JSON file path.
+        payload: Serializable payload.
+    """
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+
+
+def count_parameters(module: torch.nn.Module) -> int:
+    """Count parameters in one torch module.
+
+    Args:
+        module: Torch module.
+
+    Returns:
+        Number of parameters.
+    """
+    return sum(parameter.numel() for parameter in module.parameters())
+
+
+def estimate_forward_flops(parameter_count: int, forward_calls: int) -> int:
+    """Estimate forward-pass FLOPs from parameter count and call count.
+
+    Args:
+        parameter_count: Number of model parameters.
+        forward_calls: Number of forward calls.
+
+    Returns:
+        Approximate floating point operation count.
+    """
+    return int(2 * parameter_count * forward_calls)
+
 class CustomTensorboardCallback(BaseCallback):
     """Periodic checkpoint and local metrics callback for depth-policy training."""
 
@@ -326,6 +362,10 @@ class SpeculativeDecodingEnv(gym.Env):
         self.entropy_exact = []
         self.cu_entropy_for_obs = None
         self.cu_scores_for_obs = None
+        self.total_draft_model_calls = 0
+        self.total_target_model_calls = 0
+        self.cycles_started = 0
+        self.prompts_started = 0
         
         # 这里会根据 args.rl_token_model_path 决定是加载模型还是返回 None
         self.rl_token = load_rl_token_model(args.rl_token_model_path)
@@ -376,6 +416,12 @@ class SpeculativeDecodingEnv(gym.Env):
         return info
 
     def _prepare_for_next_topk_cycle(self, accepted_hidden_state_base, next_token_sampled):
+        """Prime the next speculative cycle and track drafter usage.
+
+        Args:
+            accepted_hidden_state_base: Verified hidden states from the target model.
+            next_token_sampled: Root token sampled by the target model.
+        """
         self.time=0
         begin_time=time.time()
         self.hidden_states_for_topk_ea_layer = accepted_hidden_state_base 
@@ -407,6 +453,7 @@ class SpeculativeDecodingEnv(gym.Env):
                 self.hidden_states_for_topk_ea_layer, 
                 input_ids=_input_ids_for_ea_layer_first_iter, use_cache=True
             )
+        self.total_draft_model_calls += 1
         
         self.model.ea_layer.stable_kv = past_key_values_ealayer
         self.current_past_key_values_ealayer = past_key_values_ealayer 
@@ -442,11 +489,22 @@ class SpeculativeDecodingEnv(gym.Env):
         self.time += time.time() - begin_time
 
     def reset(self, seed=None, options=None):
+        """Reset the env for the next PPO episode.
+
+        Args:
+            seed: Optional Gym seed.
+            options: Optional Gym reset options.
+
+        Returns:
+            The next observation and info payload.
+        """
         super().reset(seed=seed) 
+        self.cycles_started += 1
         if self.finished_overall_generation:
             self.current_episode_rewards = []
             self.entropy_exact=[]
             self.avg_episode_reward_this_episode = None
+            self.prompts_started += 1
 
             _current_input_ids_tensor = random.choice(self.input_ids_list)
             self.current_input_ids = _current_input_ids_tensor.clone().to(self.device)
@@ -483,6 +541,7 @@ class SpeculativeDecodingEnv(gym.Env):
                     tree_position_ids_init.to(self.device), 
                     self.current_input_ids, retrieve_indices_init.to(self.device)
                 )
+                self.total_target_model_calls += 1
                 
                 padding_init = (torch.zeros(1, 1, dtype=torch.long, device=self.device) - 1)
                 draft_tokens_padded_init = torch.cat((draft_tokens, padding_init), dim=1)
@@ -554,6 +613,7 @@ class SpeculativeDecodingEnv(gym.Env):
                 position_ids=current_ea_layer_position_ids, 
                 use_cache=True
             )
+            self.total_draft_model_calls += 1
             self.len_posi_for_topk_loop += 1
             self.current_past_key_values_ealayer = past_key_values_ealayer_new
 
@@ -687,6 +747,7 @@ class SpeculativeDecodingEnv(gym.Env):
                 self.current_input_ids, 
                 self.finalized_retrieve_indices.to(self.device)
             )
+            self.total_target_model_calls += 1
 
             # --- 3. Evaluate Posterior ---
             padding_verify = (torch.zeros(1, 1, dtype=torch.long, device=self.device) - 1)
@@ -769,6 +830,56 @@ class SpeculativeDecodingEnv(gym.Env):
 
     def close(self):
         pass
+
+    def build_dataset_manifest(self, total_timesteps: int, question_file: str) -> dict[str, Any]:
+        """Build dataset-style logging metadata for one LTD depth phase.
+
+        Args:
+            total_timesteps: Requested PPO horizon for the phase.
+            question_file: Prompt JSONL used for training.
+
+        Returns:
+            Serializable manifest payload.
+        """
+        target_model_parameters = count_parameters(self.model.base_model)
+        draft_model_parameters = count_parameters(self.model.ea_layer)
+        target_flops = estimate_forward_flops(
+            target_model_parameters,
+            int(self.total_target_model_calls),
+        )
+        draft_flops = estimate_forward_flops(
+            draft_model_parameters,
+            int(self.total_draft_model_calls),
+        )
+        return {
+            "phase_type": "depth",
+            "total_timesteps": int(total_timesteps),
+            "draft_model_calls": int(self.total_draft_model_calls),
+            "target_model_calls": int(self.total_target_model_calls),
+            "training_draft_model_calls": int(self.total_draft_model_calls),
+            "training_target_model_calls": int(self.total_target_model_calls),
+            "training_draft_flops": draft_flops,
+            "training_target_flops": target_flops,
+            "training_flops": draft_flops + target_flops,
+            "validation_draft_model_calls": 0,
+            "validation_target_model_calls": 0,
+            "validation_flops": 0,
+            "total_flops": draft_flops + target_flops,
+            "cycles_started": int(self.cycles_started),
+            "prompts_started": int(self.prompts_started),
+            "dataset_train": args.dataset_train,
+            "question_file": question_file,
+            "base_model_path": args.base_model_path,
+            "ea_model_path": args.ea_model_path,
+            "rl_token_model_path": args.rl_token_model_path,
+            "rl_checkpoint_path": args.rl_checkpoint_path,
+            "fixed_total_token": 60,
+            "max_draft_depth": 12,
+            "observation_dim": int(self.obs_size),
+            "target_model_parameters": target_model_parameters,
+            "draft_model_parameters": draft_model_parameters,
+            "flop_estimate_method": "2 * parameter_count * forward_calls",
+        }
 
 if __name__ == '__main__':
     os.makedirs(args.save_path, exist_ok=True)
@@ -870,17 +981,24 @@ if __name__ == '__main__':
         model_rl=model_rl,
     )
     summary_path = os.path.join(args.save_path, "training_summary.json")
-    with open(summary_path, "w", encoding="utf-8") as handle:
-        json.dump(
-            {
-                "last_saved_timestep": custom_tensorboard_callback.last_saved_timestep,
-                "best_model_step": custom_tensorboard_callback.best_model_step,
-                "best_mean_reward": custom_tensorboard_callback.best_mean_reward,
-                "final_model_path": final_model_path,
-                "metrics_log_path": custom_tensorboard_callback.metrics_log_path,
-            },
-            handle,
-            indent=2,
-        )
+    dataset_manifest_path = os.path.join(args.save_path, "dataset_manifest.json")
+    write_json(
+        dataset_manifest_path,
+        env.build_dataset_manifest(
+            total_timesteps=args.total_timesteps,
+            question_file=question_file,
+        ),
+    )
+    write_json(
+        summary_path,
+        {
+            "last_saved_timestep": custom_tensorboard_callback.last_saved_timestep,
+            "best_model_step": custom_tensorboard_callback.best_model_step,
+            "best_mean_reward": custom_tensorboard_callback.best_mean_reward,
+            "final_model_path": final_model_path,
+            "metrics_log_path": custom_tensorboard_callback.metrics_log_path,
+            "dataset_manifest_path": dataset_manifest_path,
+        },
+    )
     print(f"Model saved to {final_model_path}.")
     env.close()

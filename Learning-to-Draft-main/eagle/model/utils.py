@@ -233,6 +233,8 @@ def initialize_tree(input_ids, model, past_key_values, logits_processor):
     outputs, orig, hidden_states = model(
         input_ids, past_key_values=past_key_values, output_orig=True
     )
+    if hasattr(model, "stats_target_model_calls"):
+        model.stats_target_model_calls += 1
 
     if logits_processor is not None:
         logits = orig[:, -1]
@@ -319,6 +321,8 @@ def tree_decoding(
         past_key_values=past_key_values,
         position_ids=position_ids,
     )
+    if hasattr(model, "stats_target_model_calls"):
+        model.stats_target_model_calls += 1
 
     if model.use_eagle3:
         ea_device = model.ea_layer.lm_head.weight.device

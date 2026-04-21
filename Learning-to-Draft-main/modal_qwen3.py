@@ -7,6 +7,7 @@ import os
 import random
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -30,6 +31,7 @@ ITERATIVE_STAGE_ORDER = (
     "iter4_depth",
 )
 VALIDATION_QUESTION_END = 100000
+FLOP_ESTIMATE_MULTIPLIER = 2
 MODELS_VOLUME = modal.Volume.from_name("ltd-qwen3-models", create_if_missing=True)
 RESULTS_VOLUME = modal.Volume.from_name("ltd-qwen3-results", create_if_missing=True)
 
@@ -218,6 +220,103 @@ def read_json(path: Path) -> dict[str, Any]:
         return json.load(handle)
 
 
+def answer_manifest_path(answer_path: Path) -> Path:
+    """Return the sidecar manifest path for one answer JSONL file.
+
+    Args:
+        answer_path: Answer JSONL path.
+
+    Returns:
+        Sidecar manifest JSON path.
+    """
+    return answer_path.with_name(f"{answer_path.name}.manifest.json")
+
+
+def read_answer_manifest(answer_path: Path) -> dict[str, int]:
+    """Read one answer sidecar manifest when present.
+
+    Args:
+        answer_path: Answer JSONL path.
+
+    Returns:
+        Draft and target model call counts.
+    """
+    manifest_path = answer_manifest_path(answer_path)
+    if not manifest_path.exists():
+        return {
+            "draft_model_calls": 0,
+            "target_model_calls": 0,
+        }
+    payload = read_json(manifest_path)
+    return {
+        "draft_model_calls": int(payload.get("draft_model_calls", 0)),
+        "target_model_calls": int(payload.get("target_model_calls", 0)),
+    }
+
+
+def estimate_forward_flops(parameter_count: int, forward_calls: int) -> int:
+    """Estimate forward-pass FLOPs from parameter count and call count.
+
+    Args:
+        parameter_count: Number of model parameters.
+        forward_calls: Number of forward calls.
+
+    Returns:
+        Approximate floating point operation count.
+    """
+    return int(FLOP_ESTIMATE_MULTIPLIER * parameter_count * forward_calls)
+
+
+def update_phase_dataset_manifest(
+    stage_dir: Path,
+    validation_counts: dict[str, int],
+) -> dict[str, Any]:
+    """Update one phase dataset manifest with validation call counts.
+
+    Args:
+        stage_dir: Phase output directory.
+        validation_counts: Validation drafter/target call totals.
+    Returns:
+        Updated manifest payload, or an empty dict when absent.
+    """
+    manifest_path = stage_dir / "dataset_manifest.json"
+    if not manifest_path.exists():
+        return {}
+    payload = read_json(manifest_path)
+    training_draft_calls = int(
+        payload.get("training_draft_model_calls", payload.get("draft_model_calls", 0))
+    )
+    training_target_calls = int(
+        payload.get("training_target_model_calls", payload.get("target_model_calls", 0))
+    )
+    validation_draft_calls = int(validation_counts.get("draft_model_calls", 0))
+    validation_target_calls = int(validation_counts.get("target_model_calls", 0))
+    draft_model_parameters = int(payload.get("draft_model_parameters", 0))
+    target_model_parameters = int(payload.get("target_model_parameters", 0))
+    training_draft_flops = estimate_forward_flops(draft_model_parameters, training_draft_calls)
+    training_target_flops = estimate_forward_flops(target_model_parameters, training_target_calls)
+    validation_draft_flops = estimate_forward_flops(draft_model_parameters, validation_draft_calls)
+    validation_target_flops = estimate_forward_flops(target_model_parameters, validation_target_calls)
+    training_flops = training_draft_flops + training_target_flops
+    validation_flops = validation_draft_flops + validation_target_flops
+    payload["training_draft_model_calls"] = training_draft_calls
+    payload["training_target_model_calls"] = training_target_calls
+    payload["validation_draft_model_calls"] = validation_draft_calls
+    payload["validation_target_model_calls"] = validation_target_calls
+    payload["draft_model_calls"] = training_draft_calls + validation_draft_calls
+    payload["target_model_calls"] = training_target_calls + validation_target_calls
+    payload["training_draft_flops"] = training_draft_flops
+    payload["training_target_flops"] = training_target_flops
+    payload["training_flops"] = training_flops
+    payload["validation_draft_flops"] = validation_draft_flops
+    payload["validation_target_flops"] = validation_target_flops
+    payload["validation_flops"] = validation_flops
+    payload["total_flops"] = training_flops + validation_flops
+    payload["flop_estimate_method"] = "2 * parameter_count * forward_calls"
+    write_json(manifest_path, payload)
+    return payload
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     """Write a JSON object to disk.
 
@@ -238,6 +337,19 @@ def append_jsonl_record(path: Path, payload: dict[str, Any]) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload))
+        handle.write("\n")
+
+
+def write_time_summary(path: Path, payload: dict[str, Any]) -> None:
+    """Write one timing summary record to a JSONL file.
+
+    Args:
+        path: JSONL output path.
+        payload: Timing summary payload.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
         handle.write(json.dumps(payload))
         handle.write("\n")
 
@@ -567,6 +679,7 @@ def run_iterative_stage(
     train_question_file = state["train_question_file"]
     validation_question_file = state["validation_question_file"]
     fixed_checkpoint, resume_checkpoint = stage_dependencies(state, root_dir, stage_name)
+    training_start_time = time.time()
 
     if stage_policy_type(stage_name) == "size":
         run_command(
@@ -583,7 +696,9 @@ def run_iterative_stage(
                 rl_checkpoint_path=resume_checkpoint,
             ),
         )
-        promoted_checkpoint = select_best_size_checkpoint(
+        training_time_seconds = time.time() - training_start_time
+        validation_start_time = time.time()
+        promoted_checkpoint, validation_call_counts = select_best_size_checkpoint(
             model_preset=state["model_preset"],
             stage_name=stage_name,
             stage_dir=output_dir,
@@ -606,7 +721,9 @@ def run_iterative_stage(
                 rl_checkpoint_path=resume_checkpoint,
             ),
         )
-        promoted_checkpoint = select_best_depth_checkpoint(
+        training_time_seconds = time.time() - training_start_time
+        validation_start_time = time.time()
+        promoted_checkpoint, validation_call_counts = select_best_depth_checkpoint(
             model_preset=state["model_preset"],
             stage_name=stage_name,
             stage_dir=output_dir,
@@ -614,6 +731,27 @@ def run_iterative_stage(
             root_dir=root_dir,
             fixed_token_model_path=fixed_checkpoint,
         )
+    phase_manifest = update_phase_dataset_manifest(output_dir, validation_call_counts)
+    validation_time_seconds = time.time() - validation_start_time
+    write_time_summary(
+        output_dir / "time_summary.jsonl",
+        {
+            "event": "summary",
+            "stage_name": stage_name,
+            "phase_type": stage_policy_type(stage_name),
+            "total_timesteps": int(
+                state["size_total_timesteps"]
+                if stage_policy_type(stage_name) == "size"
+                else state["depth_total_timesteps"]
+            ),
+            "total_time_seconds": training_time_seconds + validation_time_seconds,
+            "training_time_seconds": training_time_seconds,
+            "validation_time_seconds": validation_time_seconds,
+            "training_flops": int(phase_manifest.get("training_flops", 0)),
+            "validation_flops": int(phase_manifest.get("validation_flops", 0)),
+            "total_flops": int(phase_manifest.get("total_flops", 0)),
+        },
+    )
 
     state.setdefault("completed_stages", []).append(stage_name)
     state.setdefault("stage_outputs", {})[stage_name] = str(output_dir)
@@ -1052,6 +1190,7 @@ def train_size_policy(
     """
     output_dir = REMOTE_RESULTS_DIR / (save_subdir or f"{model_preset}/size")
     ensure_results_dir(output_dir)
+    training_start_time = time.time()
     command = build_train_size_command(
         model_preset=model_preset,
         dataset_train=dataset_train,
@@ -1066,6 +1205,23 @@ def train_size_policy(
     )
 
     run_command(command)
+    training_time_seconds = time.time() - training_start_time
+    training_manifest = read_json(output_dir / "dataset_manifest.json")
+    training_flops = int(training_manifest.get("training_flops", training_manifest.get("total_flops", 0)))
+    write_time_summary(
+        output_dir / "time_summary.jsonl",
+        {
+            "event": "summary",
+            "phase_type": "size",
+            "total_timesteps": total_timesteps,
+            "total_time_seconds": training_time_seconds,
+            "training_time_seconds": training_time_seconds,
+            "validation_time_seconds": 0.0,
+            "training_flops": training_flops,
+            "validation_flops": 0,
+            "total_flops": training_flops,
+        },
+    )
     RESULTS_VOLUME.commit()
     return str(output_dir)
 
@@ -1112,6 +1268,7 @@ def train_depth_policy(
     """
     output_dir = REMOTE_RESULTS_DIR / (save_subdir or f"{model_preset}/depth")
     ensure_results_dir(output_dir)
+    training_start_time = time.time()
     command = build_train_depth_command(
         model_preset=model_preset,
         dataset_train=dataset_train,
@@ -1126,6 +1283,23 @@ def train_depth_policy(
     )
 
     run_command(command)
+    training_time_seconds = time.time() - training_start_time
+    training_manifest = read_json(output_dir / "dataset_manifest.json")
+    training_flops = int(training_manifest.get("training_flops", training_manifest.get("total_flops", 0)))
+    write_time_summary(
+        output_dir / "time_summary.jsonl",
+        {
+            "event": "summary",
+            "phase_type": "depth",
+            "total_timesteps": total_timesteps,
+            "total_time_seconds": training_time_seconds,
+            "training_time_seconds": training_time_seconds,
+            "validation_time_seconds": 0.0,
+            "training_flops": training_flops,
+            "validation_flops": 0,
+            "total_flops": training_flops,
+        },
+    )
     RESULTS_VOLUME.commit()
     return str(output_dir)
 
@@ -1414,14 +1588,19 @@ def evaluate_size_candidate(
         )
         run_command(command)
         speedup, tau = compute_validation_metrics(baseline_path, answer_path)
+        answer_counts = read_answer_manifest(answer_path)
         return {
             "checkpoint_path": str(candidate_path),
             "checkpoint_step": step,
             "speedup": speedup,
             "tau": tau,
+            "validation_draft_model_calls": answer_counts["draft_model_calls"],
+            "validation_target_model_calls": answer_counts["target_model_calls"],
         }
 
     depth_metrics: list[dict[str, float]] = []
+    total_validation_draft_calls = 0
+    total_validation_target_calls = 0
     for draft_depth in range(1, 13):
         answer_path = validation_dir / f"{candidate_name}_depth_{draft_depth}.jsonl"
         command, _ = build_eval_command(
@@ -1441,6 +1620,9 @@ def evaluate_size_candidate(
         )
         run_command(command)
         speedup, tau = compute_validation_metrics(baseline_path, answer_path)
+        answer_counts = read_answer_manifest(answer_path)
+        total_validation_draft_calls += answer_counts["draft_model_calls"]
+        total_validation_target_calls += answer_counts["target_model_calls"]
         depth_metrics.append(
             {
                 "depth": float(draft_depth),
@@ -1455,6 +1637,8 @@ def evaluate_size_candidate(
         "speedup": mean(metric["speedup"] for metric in depth_metrics),
         "tau": mean(metric["tau"] for metric in depth_metrics),
         "depth_sweep": depth_metrics,
+        "validation_draft_model_calls": total_validation_draft_calls,
+        "validation_target_model_calls": total_validation_target_calls,
     }
 
 
@@ -1500,11 +1684,14 @@ def evaluate_depth_candidate(
     )
     run_command(command)
     speedup, tau = compute_validation_metrics(baseline_path, answer_path)
+    answer_counts = read_answer_manifest(answer_path)
     return {
         "checkpoint_path": str(candidate_path),
         "checkpoint_step": checkpoint_step_for_candidate(stage_dir, candidate_path),
         "speedup": speedup,
         "tau": tau,
+        "validation_draft_model_calls": answer_counts["draft_model_calls"],
+        "validation_target_model_calls": answer_counts["target_model_calls"],
     }
 
 
@@ -1515,7 +1702,7 @@ def select_best_size_checkpoint(
     validation_question_file: str,
     root_dir: Path,
     fixed_depth_model_path: str = "",
-) -> str:
+) -> tuple[str, dict[str, int]]:
     """Select the best size-policy checkpoint by validation speedup.
 
     Args:
@@ -1527,15 +1714,24 @@ def select_best_size_checkpoint(
         fixed_depth_model_path: Optional fixed depth-policy checkpoint path.
 
     Returns:
-        The promoted canonical checkpoint path.
+        The promoted canonical checkpoint path and validation call totals.
     """
+    baseline_jsonl_path = root_dir / "validation" / "baseline" / "humaneval.jsonl"
+    baseline_existed = baseline_jsonl_path.exists()
     baseline_path = ensure_validation_baseline(
         model_preset=model_preset,
         validation_question_file=validation_question_file,
         root_dir=root_dir,
     )
+    baseline_counts = (
+        {"draft_model_calls": 0, "target_model_calls": 0}
+        if baseline_existed
+        else read_answer_manifest(baseline_path)
+    )
     results: list[dict[str, Any]] = []
     metrics_log_path = stage_dir / "validation_metrics.jsonl"
+    total_validation_draft_calls = baseline_counts["draft_model_calls"]
+    total_validation_target_calls = baseline_counts["target_model_calls"]
     for candidate_path in list_candidate_checkpoints(stage_dir):
         metrics = evaluate_size_candidate(
             model_preset=model_preset,
@@ -1545,6 +1741,8 @@ def select_best_size_checkpoint(
             stage_dir=stage_dir,
             fixed_depth_model_path=fixed_depth_model_path,
         )
+        total_validation_draft_calls += int(metrics.get("validation_draft_model_calls", 0))
+        total_validation_target_calls += int(metrics.get("validation_target_model_calls", 0))
         results.append(metrics)
         append_jsonl_record(
             metrics_log_path,
@@ -1589,7 +1787,10 @@ def select_best_size_checkpoint(
         "promoted_checkpoint_path": promoted_path,
     }
     summary_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
-    return promoted_path
+    return promoted_path, {
+        "draft_model_calls": total_validation_draft_calls,
+        "target_model_calls": total_validation_target_calls,
+    }
 
 
 def select_best_depth_checkpoint(
@@ -1599,7 +1800,7 @@ def select_best_depth_checkpoint(
     validation_question_file: str,
     root_dir: Path,
     fixed_token_model_path: str = "",
-) -> str:
+) -> tuple[str, dict[str, int]]:
     """Select the best depth-policy checkpoint by validation speedup.
 
     Args:
@@ -1611,15 +1812,24 @@ def select_best_depth_checkpoint(
         fixed_token_model_path: Optional fixed size-policy checkpoint path.
 
     Returns:
-        The promoted canonical checkpoint path.
+        The promoted canonical checkpoint path and validation call totals.
     """
+    baseline_jsonl_path = root_dir / "validation" / "baseline" / "humaneval.jsonl"
+    baseline_existed = baseline_jsonl_path.exists()
     baseline_path = ensure_validation_baseline(
         model_preset=model_preset,
         validation_question_file=validation_question_file,
         root_dir=root_dir,
     )
+    baseline_counts = (
+        {"draft_model_calls": 0, "target_model_calls": 0}
+        if baseline_existed
+        else read_answer_manifest(baseline_path)
+    )
     results: list[dict[str, Any]] = []
     metrics_log_path = stage_dir / "validation_metrics.jsonl"
+    total_validation_draft_calls = baseline_counts["draft_model_calls"]
+    total_validation_target_calls = baseline_counts["target_model_calls"]
     for candidate_path in list_candidate_checkpoints(stage_dir):
         metrics = evaluate_depth_candidate(
             model_preset=model_preset,
@@ -1629,6 +1839,8 @@ def select_best_depth_checkpoint(
             stage_dir=stage_dir,
             fixed_token_model_path=fixed_token_model_path,
         )
+        total_validation_draft_calls += int(metrics.get("validation_draft_model_calls", 0))
+        total_validation_target_calls += int(metrics.get("validation_target_model_calls", 0))
         results.append(metrics)
         append_jsonl_record(
             metrics_log_path,
@@ -1673,7 +1885,10 @@ def select_best_depth_checkpoint(
         "promoted_checkpoint_path": promoted_path,
     }
     summary_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
-    return promoted_path
+    return promoted_path, {
+        "draft_model_calls": total_validation_draft_calls,
+        "target_model_calls": total_validation_target_calls,
+    }
 
 
 def summarize_results(

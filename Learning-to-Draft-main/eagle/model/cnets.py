@@ -693,6 +693,8 @@ class Model(nn.Module):
                                                past_key_values=self.stable_kv, use_cache=True)
         else:
             out_hidden, past_key_values = self(hidden_states, input_ids=input_ids, use_cache=True)
+        if hasattr(self, "stats_draft_model_calls"):
+            self.stats_draft_model_calls += 1
         self.stable_kv = past_key_values
         last_hidden = out_hidden[:, -1]
 
@@ -731,6 +733,8 @@ class Model(nn.Module):
             # with Timer("draft one"):
             out_hidden, past_key_values = self(input_hidden, input_ids=input_ids, past_key_values=past_key_values,
                                                position_ids=position_ids, use_cache=True)
+            if hasattr(self, "stats_draft_model_calls"):
+                self.stats_draft_model_calls += 1
             len_posi += 1
             # with Timer("sort1"):
             bias1 = top_k if i > 0 else 0

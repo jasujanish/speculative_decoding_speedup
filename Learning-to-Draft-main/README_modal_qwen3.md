@@ -119,6 +119,22 @@ Outputs:
 - `/results/<preset>/benchmark_outputs/ltd/<dataset>.jsonl`
 - `/results/<preset>/benchmark_outputs/summary.csv`
 
+Run the same benchmark after only `iter0_size` and `iter0_depth` have
+completed:
+
+```bash
+modal run modal_qwen3.py \
+  --action benchmark-suite \
+  --model-preset qwen3_14b \
+  --token-model-path qwen3_14b/iterative/iter0_size/ppo_speculative_decoder_controller_rebuttal.zip \
+  --depth-model-path qwen3_14b/iterative/iter0_depth/ppo_speculative_decoder_controller_v1_single_action.zip \
+  --output-subdir qwen3_14b/benchmark_outputs_iter0 \
+  --model-label "Qwen3 14B iter0"
+```
+
+This writes to `/results/<preset>/benchmark_outputs_iter0` instead of
+overwriting the final benchmark output folder.
+
 ## Download result files
 
 `modal volume get` downloads directories recursively when the remote path is a

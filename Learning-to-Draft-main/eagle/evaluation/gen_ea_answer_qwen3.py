@@ -6,6 +6,7 @@ python3 gen_model_answer.py --model-path lmsys/fastchat-t5-3b-v1.0 --model-id fa
 import argparse
 import json
 import os
+from pathlib import Path
 script_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(script_dir)
 from accelerate.utils import set_seed
@@ -25,6 +26,19 @@ except:
     from eagle.model.ea_model import EaModel
     from eagle.model.kv_cache import initialize_past_key_values
     from eagle.model.utils import *
+
+
+def answer_manifest_path(answer_file):
+    """Return the sidecar manifest path for an answer file.
+
+    Args:
+        answer_file: JSONL answer file path.
+
+    Returns:
+        JSON manifest path.
+    """
+    answer_path = Path(os.path.expanduser(answer_file))
+    return answer_path.with_name(f"{answer_path.name}.manifest.json")
 
 
 
@@ -115,6 +129,8 @@ def get_model_answers(
         depth_model=args.depth_model,
         device_map="auto"
     )
+    model.stats_target_model_calls = 0
+    model.ea_layer.stats_draft_model_calls = 0
 
     tokenizer = model.get_tokenizer()
 
@@ -314,6 +330,16 @@ def get_model_answers(
             print("Average accepth length",sum(model.accept_length)/len(model.accept_length))
     if len(model.dyn_tokens)!=0:
         print("Dyn total tokens",sum(model.dyn_tokens)/len(model.dyn_tokens))
+    manifest = {
+        "answer_file": os.path.expanduser(answer_file),
+        "question_count": len(questions),
+        "draft_model_calls": int(getattr(model.ea_layer, "stats_draft_model_calls", 0)),
+        "target_model_calls": int(getattr(model, "stats_target_model_calls", 0)),
+    }
+    answer_manifest_path(answer_file).write_text(
+        json.dumps(manifest, indent=2),
+        encoding="utf-8",
+    )
 
 def reorg_answer_file(answer_file):
     """Sort by question id and de-duplication"""

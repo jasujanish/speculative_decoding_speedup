@@ -45,6 +45,8 @@ MAX_GENERATED_TOKENS = 256
 DEFAULT_TOTAL_TOKEN = 60
 DEFAULT_TOP_K = 10
 DEFAULT_MAX_DRAFT_DEPTH = 12
+FLOP_ESTIMATE_MULTIPLIER = 2
+TRAINING_FLOP_ESTIMATE_MULTIPLIER = 6
 
 
 def ensure_dir(path: Path) -> None:
@@ -124,6 +126,31 @@ def safe_cuda_synchronize() -> None:
     """Synchronize CUDA when available."""
     if torch.cuda.is_available():
         torch.cuda.synchronize()
+
+
+def count_parameters(module: nn.Module) -> int:
+    """Count parameters in one torch module.
+
+    Args:
+        module: Torch module.
+
+    Returns:
+        Number of parameters.
+    """
+    return sum(parameter.numel() for parameter in module.parameters())
+
+
+def estimate_forward_flops(parameter_count: int, forward_calls: int) -> int:
+    """Estimate forward-pass FLOPs from parameter count and call count.
+
+    Args:
+        parameter_count: Number of model parameters.
+        forward_calls: Number of forward calls.
+
+    Returns:
+        Approximate floating point operation count.
+    """
+    return int(FLOP_ESTIMATE_MULTIPLIER * parameter_count * forward_calls)
 
 
 def scores_entropy(scores: torch.Tensor) -> float:
@@ -830,6 +857,7 @@ def collect_supervised_depth_dataset(
     Returns:
         Dataset manifest payload.
     """
+    collection_start_time = time.time()
     output_root = Path(output_dir)
     ensure_dir(output_root)
     model = EaModel.from_pretrained(
@@ -854,6 +882,16 @@ def collect_supervised_depth_dataset(
         max_draft_depth=max_draft_depth,
     )
     records, metadata = collector.collect(total_timesteps=total_timesteps)
+    target_model_parameters = count_parameters(model.base_model)
+    draft_model_parameters = count_parameters(model.ea_layer)
+    target_flops = estimate_forward_flops(
+        target_model_parameters,
+        int(metadata["target_model_calls"]),
+    )
+    draft_flops = estimate_forward_flops(
+        draft_model_parameters,
+        int(metadata["draft_model_calls"]),
+    )
     dataset_path = output_root / "dataset.jsonl"
     write_jsonl(dataset_path, records)
     manifest = {
@@ -862,6 +900,13 @@ def collect_supervised_depth_dataset(
         "question_file": question_file,
         "base_model_path": base_model_path,
         "ea_model_path": ea_model_path,
+        "total_collection_time_seconds": time.time() - collection_start_time,
+        "target_model_parameters": target_model_parameters,
+        "draft_model_parameters": draft_model_parameters,
+        "collection_target_flops": target_flops,
+        "collection_draft_flops": draft_flops,
+        "collection_total_flops": target_flops + draft_flops,
+        "flop_estimate_method": "2 * parameter_count * forward_calls",
     }
     write_json(output_root / "dataset_manifest.json", manifest)
     return manifest
@@ -1006,6 +1051,8 @@ def train_supervised_depth_model(
     best_model_path = output_root / "supervised_depth_model_best.pt"
     metrics_log_path = output_root / "training_metrics.jsonl"
     train_iterator = iter(train_loader)
+    model_parameter_count = count_parameters(model)
+    train_examples_seen = 0
 
     for optimizer_step in range(1, optimizer_steps + 1):
         try:
@@ -1013,6 +1060,7 @@ def train_supervised_depth_model(
         except StopIteration:
             train_iterator = iter(train_loader)
             observations, targets = next(train_iterator)
+        train_examples_seen += observations.shape[0]
         observations = observations.to(device)
         targets = targets.to(device)
         model.train()
@@ -1109,6 +1157,12 @@ def train_supervised_depth_model(
         "final_model_path": str(final_model_path),
         "best_model_path": str(best_model_path) if best_model_path.exists() else "",
         "metrics_log_path": str(metrics_log_path),
+        "model_parameters": model_parameter_count,
+        "training_examples_seen": train_examples_seen,
+        "estimated_training_flops": int(
+            TRAINING_FLOP_ESTIMATE_MULTIPLIER * model_parameter_count * train_examples_seen
+        ),
+        "training_flop_estimate_method": "6 * supervised_model_parameters * training_examples_seen",
     }
     write_json(output_root / "training_summary.json", summary)
     return summary

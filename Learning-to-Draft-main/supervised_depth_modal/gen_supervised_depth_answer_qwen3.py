@@ -25,6 +25,19 @@ from supervised_depth_modal.core import load_supervised_depth_checkpoint, scores
 set_seed(0)
 
 
+def answer_manifest_path(answer_file: str) -> Path:
+    """Return the sidecar manifest path for an answer file.
+
+    Args:
+        answer_file: JSONL answer file path.
+
+    Returns:
+        JSON manifest path.
+    """
+    answer_path = Path(os.path.expanduser(answer_file))
+    return answer_path.with_name(f"{answer_path.name}.manifest.json")
+
+
 def patch_depth_runner(model: EaModel, depth_model_path: str) -> None:
     """Attach a supervised depth model to Eagle3 tree growth.
 
@@ -96,6 +109,8 @@ def patch_depth_runner(model: EaModel, depth_model_path: str) -> None:
                 input_ids=input_ids,
                 use_cache=True,
             )
+        if hasattr(self, "stats_draft_model_calls"):
+            self.stats_draft_model_calls += 1
         self.stable_kv = past_key_values
         last_hidden = out_hidden[:, -1]
         last_headout = self.lm_head(self.norm(last_hidden))
@@ -127,6 +142,8 @@ def patch_depth_runner(model: EaModel, depth_model_path: str) -> None:
                 position_ids=position_ids,
                 use_cache=True,
             )
+            if hasattr(self, "stats_draft_model_calls"):
+                self.stats_draft_model_calls += 1
             len_posi += 1
             bias1 = top_k if i > 0 else 0
             bias2 = max(0, i - 1)
@@ -374,6 +391,8 @@ def get_model_answers(
     )
     if args.depth_model:
         patch_depth_runner(model, args.depth_model)
+    model.stats_target_model_calls = 0
+    model.ea_layer.stats_draft_model_calls = 0
     tokenizer = model.get_tokenizer()
     logits_processor = prepare_logits_processor(temperature=temperature) if temperature > 1e-5 else None
     model.eval()
@@ -494,6 +513,16 @@ def get_model_answers(
                 )
                 + "\n"
             )
+    manifest = {
+        "answer_file": os.path.expanduser(answer_file),
+        "question_count": len(questions),
+        "draft_model_calls": int(getattr(model.ea_layer, "stats_draft_model_calls", 0)),
+        "target_model_calls": int(getattr(model, "stats_target_model_calls", 0)),
+    }
+    answer_manifest_path(answer_file).write_text(
+        json.dumps(manifest, indent=2),
+        encoding="utf-8",
+    )
 
 
 def reorg_answer_file(answer_file: str) -> None:
