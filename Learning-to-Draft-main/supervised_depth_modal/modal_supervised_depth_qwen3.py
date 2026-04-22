@@ -22,7 +22,7 @@ LOCAL_PROJECT_DIR = Path(__file__).resolve().parents[1]
 REMOTE_PROJECT_DIR = Path("/root/project")
 REMOTE_MODELS_DIR = Path("/models")
 REMOTE_RESULTS_DIR = Path("/results")
-DEFAULT_DATASETS = ("mt_bench", "gsm8k", "alpaca", "qa")
+DEFAULT_DATASETS = ("mt_bench", "gsm8k")
 METHOD_LABELS = {
     "baseline": "Baseline",
     "eagle3": "Eagle3",
@@ -717,10 +717,15 @@ def manifest_matches_policy(
     """
     normalized = policy_variant.strip().lower() or "base"
     manifest_variant = str(manifest.get("policy_variant", "base")).strip().lower() or "base"
-    return (
-        int(manifest.get("total_timesteps", -1)) == total_timesteps
-        and manifest_variant == normalized
-    )
+    if int(manifest.get("total_timesteps", -1)) != total_timesteps:
+        return False
+    if manifest_variant != normalized:
+        return False
+    if normalized == "base":
+        return str(manifest.get("target_type", "")) == "greedy_next_depth"
+    if normalized == "titan":
+        return str(manifest.get("target_type", "")) == "q_best_future"
+    return True
 
 
 @app.function(
@@ -776,7 +781,7 @@ def collect_depth_dataset(
 
     Args:
         model_preset: Supported preset.
-        total_timesteps: Environmental interaction budget.
+        total_timesteps: Minimum number of labeled depth states to collect.
         policy_variant: Supervised policy variant.
         validation_fraction: HumanEval validation split fraction.
         split_seed: HumanEval split seed.
@@ -834,7 +839,7 @@ def train_depth_policy(
 
     Args:
         model_preset: Supported preset.
-        total_timesteps: Environmental interaction budget used for collection.
+        total_timesteps: Minimum number of labeled depth states used for collection.
         epochs: Number of full passes over the supervised training split.
         checkpoint_epochs: Checkpoint interval in epochs.
         policy_variant: Supervised policy variant.
@@ -1199,7 +1204,7 @@ def main(
     Args:
         action: Remote action to execute.
         model_preset: Supported preset.
-        total_timesteps: Environmental interaction budget.
+        total_timesteps: Minimum number of labeled depth states to collect.
         epochs: Number of full passes over the supervised training split.
         checkpoint_epochs: Checkpoint interval in epochs.
         policy_variant: Supervised policy variant.

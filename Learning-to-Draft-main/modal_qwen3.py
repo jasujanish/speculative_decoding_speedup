@@ -21,7 +21,7 @@ LOCAL_PROJECT_DIR = Path(__file__).resolve().parent
 REMOTE_PROJECT_DIR = Path("/root/project")
 REMOTE_MODELS_DIR = Path("/models")
 REMOTE_RESULTS_DIR = Path("/results")
-DEFAULT_DATASETS = ("mt_bench", "gsm8k", "alpaca", "qa")
+DEFAULT_DATASETS = ("mt_bench", "gsm8k")
 ITERATIVE_STAGE_ORDER = (
     "iter0_size",
     "iter0_depth",

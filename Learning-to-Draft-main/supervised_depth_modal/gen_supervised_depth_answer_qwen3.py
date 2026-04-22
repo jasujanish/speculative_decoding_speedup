@@ -22,6 +22,7 @@ from eagle.model.utils import prepare_logits_processor
 from supervised_depth_modal.core import (
     ENHANCED_POLICY_VARIANT,
     EOS_LOGPROB_FALLBACK,
+    TITAN_POLICY_VARIANT,
     end_token_logprob,
     load_supervised_depth_checkpoint,
     map_target_token_ids_to_draft_ids,
@@ -324,7 +325,7 @@ def patch_depth_runner(model: EaModel, depth_model_path: str) -> None:
         obs[114:128] = float(current_depth) / 10.0
         current_entropy = scores_entropy(scores_flat)
         obs[128] = current_entropy
-        if policy_variant == ENHANCED_POLICY_VARIANT:
+        if policy_variant in {ENHANCED_POLICY_VARIANT, TITAN_POLICY_VARIANT}:
             score_max, score_mean, score_std, score_min = score_summary_features(scores_flat)
             obs[129] = score_max
             obs[130] = score_mean

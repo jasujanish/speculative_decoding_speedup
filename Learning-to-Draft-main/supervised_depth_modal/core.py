@@ -48,8 +48,10 @@ DEFAULT_TOP_K = 10
 DEFAULT_MAX_DRAFT_DEPTH = 12
 DEFAULT_POLICY_VARIANT = "base"
 ENHANCED_POLICY_VARIANT = "enhanced"
+TITAN_POLICY_VARIANT = "titan"
 DEFAULT_HIDDEN_DIMS = (1024,)
 ENHANCED_HIDDEN_DIMS = (1536, 384)
+TITAN_HIDDEN_DIMS = (1664, 384, 128)
 EOS_LOGPROB_FALLBACK = -100.0
 FLOP_ESTIMATE_MULTIPLIER = 2
 TRAINING_FLOP_ESTIMATE_MULTIPLIER = 6
@@ -185,10 +187,15 @@ def normalize_policy_variant(policy_variant: str) -> str:
         Normalized policy variant.
     """
     normalized = policy_variant.strip().lower() or DEFAULT_POLICY_VARIANT
-    if normalized not in {DEFAULT_POLICY_VARIANT, ENHANCED_POLICY_VARIANT}:
+    if normalized not in {
+        DEFAULT_POLICY_VARIANT,
+        ENHANCED_POLICY_VARIANT,
+        TITAN_POLICY_VARIANT,
+    }:
         raise ValueError(
             f"Unsupported policy_variant '{policy_variant}'. Use "
-            f"'{DEFAULT_POLICY_VARIANT}' or '{ENHANCED_POLICY_VARIANT}'."
+            f"'{DEFAULT_POLICY_VARIANT}', '{ENHANCED_POLICY_VARIANT}', or "
+            f"'{TITAN_POLICY_VARIANT}'."
         )
     return normalized
 
@@ -202,7 +209,10 @@ def policy_observation_dim(policy_variant: str) -> int:
     Returns:
         Observation dimension.
     """
-    if normalize_policy_variant(policy_variant) == ENHANCED_POLICY_VARIANT:
+    if normalize_policy_variant(policy_variant) in {
+        ENHANCED_POLICY_VARIANT,
+        TITAN_POLICY_VARIANT,
+    }:
         return ENHANCED_OBSERVATION_DIM
     return OBSERVATION_DIM
 
@@ -219,6 +229,8 @@ def policy_hidden_dims(policy_variant: str, hidden_dim: int = 1024) -> tuple[int
     """
     if normalize_policy_variant(policy_variant) == ENHANCED_POLICY_VARIANT:
         return ENHANCED_HIDDEN_DIMS
+    if normalize_policy_variant(policy_variant) == TITAN_POLICY_VARIANT:
+        return TITAN_HIDDEN_DIMS
     return (hidden_dim,)
 
 
@@ -789,7 +801,7 @@ class DepthStateCollector:
         obs[114:128] = draft_position_ids
         if self.cu_scores_for_obs is not None:
             obs[128] = scores_entropy(self.cu_scores_for_obs.flatten())
-        if self.policy_variant == ENHANCED_POLICY_VARIANT:
+        if self.policy_variant in {ENHANCED_POLICY_VARIANT, TITAN_POLICY_VARIANT}:
             summary_scores = self.cu_scores_for_obs
             if summary_scores is None:
                 summary_scores = self.current_scores_for_topk_loop_obs
@@ -953,15 +965,216 @@ class DepthStateCollector:
             "current_seq_len": int(updated_input_ids.shape[1]),
         }
 
-    def collect(self, total_timesteps: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        """Collect a timestep-limited supervised dataset.
+    def _build_sweep_record(
+        self,
+        observation: np.ndarray,
+        metrics: dict[str, Any],
+        decision_depth: int,
+    ) -> dict[str, Any]:
+        """Build one unlabeled depth-state record from a sweep.
 
         Args:
-            total_timesteps: Maximum number of depth-decision states to collect.
+            observation: Policy observation.
+            metrics: Verification metrics for stopping at this depth.
+            decision_depth: Draft depth represented by the observation.
+
+        Returns:
+            Record with observation and stop metrics.
+        """
+        record = {
+            "observation": observation.tolist(),
+            "draft_depth": int(decision_depth),
+            "context_length": int(self.current_input_ids.shape[1]),
+            "entropy": float(observation[128]),
+            "stop_throughput": float(metrics["throughput"]),
+            "stop_accept_length": float(metrics["accept_length"]),
+        }
+        if self.policy_variant == TITAN_POLICY_VARIANT:
+            record.update(
+                {
+                    "score_max": float(observation[129]),
+                    "score_mean": float(observation[130]),
+                    "score_std": float(observation[131]),
+                    "score_min": float(observation[132]),
+                    "entropy_delta": float(observation[133]),
+                    "eos_logprob_from_last_drafter_logits": float(observation[134]),
+                }
+            )
+        return record
+
+    def _label_greedy_sweep(self, sweep_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Label a full depth sweep with adjacent-depth greedy targets.
+
+        Args:
+            sweep_records: Records ordered by increasing draft depth.
+
+        Returns:
+            Records with greedy one-step ``target_delta`` labels.
+        """
+        labeled_records: list[dict[str, Any]] = []
+        for index, record in enumerate(sweep_records):
+            labeled = dict(record)
+            next_record = sweep_records[index + 1] if index + 1 < len(sweep_records) else record
+            target_delta = float(next_record["stop_throughput"]) - float(record["stop_throughput"])
+            if index + 1 == len(sweep_records):
+                target_delta = 0.0
+            labeled.update(
+                {
+                    "target_delta": float(target_delta),
+                    "continue_label": int(target_delta > 0.0),
+                    "next_throughput": float(next_record["stop_throughput"]),
+                    "next_accept_length": float(next_record["stop_accept_length"]),
+                    "target_type": "greedy_next_depth",
+                }
+            )
+            labeled_records.append(labeled)
+        return labeled_records
+
+    def _label_titan_sweep(self, sweep_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Label a full depth sweep with best-future Q-style targets.
+
+        Args:
+            sweep_records: Records ordered by increasing draft depth.
+
+        Returns:
+            Records with Q-style ``target_delta`` labels.
+        """
+        labeled_records: list[dict[str, Any]] = []
+        best_future: dict[str, Any] | None = None
+        for record in reversed(sweep_records):
+            labeled = dict(record)
+            if best_future is None:
+                q_continue = float(record["stop_throughput"])
+                best_future_depth = int(record["draft_depth"])
+                best_future_accept_length = float(record["stop_accept_length"])
+                target_delta = 0.0
+            else:
+                q_continue = float(best_future["stop_throughput"])
+                best_future_depth = int(best_future["draft_depth"])
+                best_future_accept_length = float(best_future["stop_accept_length"])
+                target_delta = q_continue - float(record["stop_throughput"])
+            labeled.update(
+                {
+                    "target_delta": float(target_delta),
+                    "continue_label": int(target_delta > 0.0),
+                    "q_stop_throughput": float(record["stop_throughput"]),
+                    "q_continue_throughput": q_continue,
+                    "best_future_depth": best_future_depth,
+                    "best_future_accept_length": best_future_accept_length,
+                    "next_throughput": q_continue,
+                    "next_accept_length": best_future_accept_length,
+                    "target_type": "q_best_future",
+                }
+            )
+            labeled_records.append(labeled)
+            if (
+                best_future is None
+                or float(record["stop_throughput"]) > float(best_future["stop_throughput"])
+            ):
+                best_future = record
+        labeled_records.reverse()
+        return labeled_records
+
+    def _collect_sweeps(self, total_timesteps: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Collect full depth sweeps and label every depth state.
+
+        Args:
+            total_timesteps: Minimum number of labeled depth states to collect.
 
         Returns:
             Dataset records and collection metadata.
         """
+        records: list[dict[str, Any]] = []
+        collected_sweeps = 0
+        target_type = (
+            "q_best_future"
+            if self.policy_variant == TITAN_POLICY_VARIANT
+            else "greedy_next_depth"
+        )
+        with tqdm(
+            total=total_timesteps,
+            desc=f"Collecting {self.policy_variant} depth sweeps",
+            unit="step",
+            dynamic_ncols=True,
+        ) as progress_bar:
+            while len(records) < total_timesteps:
+                if self.finished_overall_generation or self.current_input_ids is None:
+                    self._start_new_generation()
+
+                sweep_records: list[dict[str, Any]] = []
+                while True:
+                    observation = self._build_observation()
+                    decision_depth = self.cnet_step
+                    current_metrics = self._verify_current_tree(apply_update=False)
+                    sweep_records.append(
+                        self._build_sweep_record(
+                            observation=observation,
+                            metrics=current_metrics,
+                            decision_depth=decision_depth,
+                        )
+                    )
+                    if self.cnet_step >= self.max_draft_depth:
+                        break
+                    self._expand_one_level()
+
+                if self.policy_variant == TITAN_POLICY_VARIANT:
+                    labeled_sweep = self._label_titan_sweep(sweep_records)
+                else:
+                    labeled_sweep = self._label_greedy_sweep(sweep_records)
+                remaining = max(0, total_timesteps - len(records))
+                records.extend(labeled_sweep)
+                self.examples_collected += len(labeled_sweep)
+                collected_sweeps += 1
+                progress_bar.update(min(remaining, len(labeled_sweep)))
+                progress_bar.set_postfix(
+                    sweeps=int(collected_sweeps),
+                    records=int(len(records)),
+                    depth=int(self.cnet_step),
+                    episodes=int(self.episodes_started),
+                    draft_calls=int(self.total_draft_model_calls),
+                    target_calls=int(self.total_target_model_calls),
+                )
+
+                self._verify_current_tree(apply_update=True)
+                if self.finished_overall_generation:
+                    self.current_input_ids = None
+                else:
+                    self._prepare_for_next_topk_cycle(
+                        self.accepted_hidden_state_base_for_next_topk,
+                        self.next_token_sampled_for_next_topk,
+                    )
+
+        metadata = {
+            "total_timesteps": total_timesteps,
+            "collected_sweeps": collected_sweeps,
+            "collected_examples": len(records),
+            "episodes_started": self.episodes_started,
+            "draft_model_calls": self.total_draft_model_calls,
+            "target_model_calls": self.total_target_model_calls,
+            "fixed_total_token": self.total_token_limit,
+            "max_draft_depth": self.max_draft_depth,
+            "observation_dim": self.observation_dim,
+            "policy_variant": self.policy_variant,
+            "target_type": target_type,
+            "labeling_note": (
+                "Each full draft-depth sweep is labeled for every depth state "
+                "using the policy variant's objective."
+            ),
+        }
+        return records, metadata
+
+    def collect(self, total_timesteps: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Collect a timestep-limited supervised dataset.
+
+        Args:
+            total_timesteps: Minimum number of labeled depth states to collect.
+
+        Returns:
+            Dataset records and collection metadata.
+        """
+        if self.policy_variant in {DEFAULT_POLICY_VARIANT, TITAN_POLICY_VARIANT}:
+            return self._collect_sweeps(total_timesteps=total_timesteps)
+
         records: list[dict[str, Any]] = []
         with tqdm(
             total=total_timesteps,
@@ -1057,7 +1270,7 @@ def collect_supervised_depth_dataset(
         ea_model_path: Eagle3 model path or repo id.
         question_file: Training prompt JSONL.
         output_dir: Dataset output directory.
-        total_timesteps: Maximum number of collected decision states.
+        total_timesteps: Minimum number of labeled depth states to collect.
         total_token: Fixed verification size.
         max_draft_depth: Maximum explored draft depth.
         policy_variant: Supervised policy variant.

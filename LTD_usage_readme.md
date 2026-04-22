@@ -8,11 +8,6 @@ This document describes the LTD Modal workflow in
 - `qwen3_8b` -> `Qwen/Qwen3-8B` + `AngelSlim/Qwen3-8B_eagle3`
 - `qwen3_14b` -> `Qwen/Qwen3-14B` + `AngelSlim/Qwen3-14B_eagle3`
 
-## Models
-
-- `qwen3_8b` -> `Qwen/Qwen3-8B` + `AngelSlim/Qwen3-8B_eagle3`
-- `qwen3_14b` -> `Qwen/Qwen3-14B` + `AngelSlim/Qwen3-14B_eagle3`
-
 ## 1. Setup
 
 Create the Modal virtual environment from the repository root, then run the
@@ -26,16 +21,7 @@ modal setup
 cd Learning-to-Draft-main
 ```
 
-## 2. Download Models
-
-```bash
-modal run modal_qwen3.py::download_models --model-preset qwen3_8b
-modal run modal_qwen3.py::download_models --model-preset qwen3_14b
-```
-
-Weights are cached in the `ltd-qwen3-models` Modal volume. These weights are shared by the LTD workflow and the supervised-depth workflow.
-
-## 3. Iterative Training
+## 2. Iterative Training
 
 The paper-style workflow runs one explicit stage per Modal execution and stores
 state in `/results/<preset>/iterative/iterative_state.json`.
@@ -45,7 +31,7 @@ Check the next required stage:
 ```bash
 modal run modal_qwen3.py \
   --action iterative-status \
-  --model-preset qwen3_14b
+  --model-preset qwen3_8b
 ```
 
 Run that exact stage:
@@ -53,18 +39,17 @@ Run that exact stage:
 ```bash
 modal run modal_qwen3.py \
   --action iterative-train \
-  --model-preset qwen3_14b \
+  --model-preset qwen3_8b \
   --current-stage iter0_size \
-  --size-total-timesteps 100000 \
-  --depth-total-timesteps 1000000 \
+  --size-total-timesteps 10000 \
+  --depth-total-timesteps 10000 \
   --batch-size 256 \
   --n-steps 2048 \
   --lr 0.001 \
   --validation-fraction 0.2 \
   --split-seed 42
 ```
-
-Stage order:
+Here `iter0_size` is the first stage. This is the order of stages:
 
 - `iter0_size`
 - `iter0_depth`
@@ -83,6 +68,8 @@ Defaults:
 - size policy: `gamma=0.9`, `pi_arch=[1024, 256]`, `vf_arch=[1024, 256]`
 - depth policy: `gamma=0.999`, `pi_arch=[1024]`, `vf_arch=[1024, 256]`
 - checkpoint frequency: every `10000` timesteps
+
+**Important Note**: there are 2 supported models, `qwen3_8b` and `qwen3_14b`
 
 ### 3a. Stage Outputs
 
@@ -128,7 +115,10 @@ After `iter3_size` and `iter4_depth` complete:
 When passing checkpoint paths back to `modal_qwen3.py`, use either absolute
 remote paths or paths relative to `/results`.
 
-## 4. Four-Dataset Benchmark and CSV
+### 3c. Repeated running
+This command is run repeatedely with multiple stages. The first 2 runs are done to train the initial policies. The last 4 runs perform co-optimization.
+
+## 4. Benchmark and CSV
 
 With co-optimization (`iter3_size` and `iter4_depth`):
 
@@ -153,7 +143,7 @@ modal run modal_qwen3.py \
   --model-label "Qwen3 14B iter0"
 ```
 
-Default benchmark datasets are `mt_bench`, `gsm8k`, `alpaca`, and `qa`.
+Default benchmark datasets are `mt_bench` and `gsm8k`.
 
 Outputs:
 
@@ -170,24 +160,14 @@ The summary CSV has `model`, `method`, per-dataset speedup/tau columns, and
 `modal volume get` downloads directories recursively when the remote path is a
 folder.
 
-Inspect first:
-
-```bash
-modal volume ls ltd-qwen3-results /
-modal volume ls ltd-qwen3-results qwen3_14b
-modal volume ls ltd-qwen3-results qwen3_14b/iterative
-```
-
 Download one stage:
-
 ```bash
-modal volume get ltd-qwen3-results qwen3_14b/iterative/iter0_size ./local_path
+modal volume get ltd-qwen3-results qwen3_8b/iterative/iter0_size ./local_path
 ```
 
 Download the full iterative training tree:
-
 ```bash
-modal volume get ltd-qwen3-results qwen3_14b/iterative ./local_path
+modal volume get ltd-qwen3-results qwen3_8b/iterative ./local_path
 ```
 
 ## 6. Remove Results on Modal

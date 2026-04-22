@@ -208,7 +208,7 @@ run overrides them.
 - validation benchmark: HumanEval validation split
 - validation selection metric: highest speedup over baseline
 - validation tie-breakers: higher `tau`, then higher checkpoint step
-- benchmark datasets: `mt_bench`, `gsm8k`, `alpaca`, `qa`
+- benchmark datasets: `mt_bench`, `gsm8k`
 
 ### PPO settings
 
