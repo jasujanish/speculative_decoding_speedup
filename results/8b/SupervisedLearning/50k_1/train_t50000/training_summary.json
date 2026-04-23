@@ -1,0 +1,29 @@
+{
+  "dataset_path": "/results/qwen3_8b/supervised_depth/dataset_t50000/dataset.jsonl",
+  "policy_variant": "base",
+  "input_dim": 129,
+  "hidden_dims": [
+    1024
+  ],
+  "total_timesteps": 50000,
+  "epochs": 1,
+  "optimizer_steps": 176,
+  "train_batches_per_epoch": 176,
+  "checkpoint_epochs": 1,
+  "batch_size": 256,
+  "lr": 0.001,
+  "checkpoint_frequency": "every_1_epochs",
+  "validation_fraction": 0.1,
+  "split_seed": 42,
+  "train_examples": 45010,
+  "validation_examples": 5001,
+  "best_validation_loss": 0.005205879688867806,
+  "final_model_path": "/results/qwen3_8b/supervised_depth/train_t50000/supervised_depth_model.pt",
+  "best_model_path": "/results/qwen3_8b/supervised_depth/train_t50000/supervised_depth_model_best.pt",
+  "metrics_log_path": "/results/qwen3_8b/supervised_depth/train_t50000/training_metrics.jsonl",
+  "model_parameters": 134145,
+  "training_examples_seen": 45010,
+  "estimated_training_flops": 36227198700,
+  "training_flop_estimate_method": "6 * supervised_model_parameters * training_examples_seen",
+  "promoted_checkpoint_path": "/results/qwen3_8b/supervised_depth/train_t50000/supervised_depth_model.pt"
+}

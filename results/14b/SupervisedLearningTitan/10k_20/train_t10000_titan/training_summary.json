@@ -19,7 +19,7 @@
   "split_seed": 42,
   "train_examples": 9009,
   "validation_examples": 1001,
-  "best_validation_loss": 0.010658346257962428,
+  "best_validation_loss": 0.010323590412922018,
   "final_model_path": "/results/qwen3_14b/supervised_depth/train_t10000_titan/supervised_depth_model.pt",
   "best_model_path": "/results/qwen3_14b/supervised_depth/train_t10000_titan/supervised_depth_model_best.pt",
   "metrics_log_path": "/results/qwen3_14b/supervised_depth/train_t10000_titan/training_metrics.jsonl",

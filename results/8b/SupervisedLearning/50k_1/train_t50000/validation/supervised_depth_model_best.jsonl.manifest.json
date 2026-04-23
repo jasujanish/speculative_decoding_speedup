@@ -1,0 +1,6 @@
+{
+  "answer_file": "/results/qwen3_8b/supervised_depth/train_t50000/validation/supervised_depth_model_best.jsonl",
+  "question_count": 16,
+  "draft_model_calls": 13177,
+  "target_model_calls": 2119
+}

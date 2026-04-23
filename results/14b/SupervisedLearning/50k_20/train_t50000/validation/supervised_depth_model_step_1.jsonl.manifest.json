@@ -1,0 +1,6 @@
+{
+  "answer_file": "/results/qwen3_14b/supervised_depth/train_t50000/validation/supervised_depth_model_step_1.jsonl",
+  "question_count": 16,
+  "draft_model_calls": 24598,
+  "target_model_calls": 1898
+}

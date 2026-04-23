@@ -1,0 +1,6 @@
+{"event": "step", "epoch": 1, "optimizer_step": 1, "train_loss": 0.8625388145446777, "validation_loss": 7.125167804283577, "validation_sign_accuracy": 0.8681318681318682}
+{"event": "checkpoint", "epoch": 1, "optimizer_step": 1, "checkpoint_path": "/results/qwen3_14b/supervised_depth/train_t10000/supervised_depth_model_step_1.pt"}
+{"event": "best_model", "epoch": 1, "optimizer_step": 1, "best_validation_loss": 7.125167804283577, "best_model_path": "/results/qwen3_14b/supervised_depth/train_t10000/supervised_depth_model_best.pt"}
+{"event": "step", "epoch": 1, "optimizer_step": 36, "train_loss": 0.17153283953666687, "validation_loss": 0.014658347746314524, "validation_sign_accuracy": 0.44155844155844154}
+{"event": "checkpoint", "epoch": 1, "optimizer_step": 36, "checkpoint_path": "/results/qwen3_14b/supervised_depth/train_t10000/supervised_depth_model_step_36.pt"}
+{"event": "best_model", "epoch": 1, "optimizer_step": 36, "best_validation_loss": 0.014658347746314524, "best_model_path": "/results/qwen3_14b/supervised_depth/train_t10000/supervised_depth_model_best.pt"}

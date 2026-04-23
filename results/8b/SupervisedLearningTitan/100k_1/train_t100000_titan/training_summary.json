@@ -1,0 +1,31 @@
+{
+  "dataset_path": "/results/qwen3_8b/supervised_depth/dataset_t100000_titan/dataset.jsonl",
+  "policy_variant": "titan",
+  "input_dim": 135,
+  "hidden_dims": [
+    1664,
+    384,
+    128
+  ],
+  "total_timesteps": 100000,
+  "epochs": 1,
+  "optimizer_steps": 352,
+  "train_batches_per_epoch": 352,
+  "checkpoint_epochs": 1,
+  "batch_size": 256,
+  "lr": 0.001,
+  "checkpoint_frequency": "every_1_epochs",
+  "validation_fraction": 0.1,
+  "split_seed": 42,
+  "train_examples": 90008,
+  "validation_examples": 10001,
+  "best_validation_loss": 0.03504367436758847,
+  "final_model_path": "/results/qwen3_8b/supervised_depth/train_t100000_titan/supervised_depth_model.pt",
+  "best_model_path": "/results/qwen3_8b/supervised_depth/train_t100000_titan/supervised_depth_model_best.pt",
+  "metrics_log_path": "/results/qwen3_8b/supervised_depth/train_t100000_titan/training_metrics.jsonl",
+  "model_parameters": 915073,
+  "training_examples_seen": 90008,
+  "estimated_training_flops": 494183343504,
+  "training_flop_estimate_method": "6 * supervised_model_parameters * training_examples_seen",
+  "promoted_checkpoint_path": "/results/qwen3_8b/supervised_depth/train_t100000_titan/supervised_depth_model.pt"
+}

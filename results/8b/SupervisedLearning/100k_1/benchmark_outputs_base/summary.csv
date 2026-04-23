@@ -1,0 +1,4 @@
+model,method,mt_bench_speedup,mt_bench_tau,gsm8k_speedup,gsm8k_tau,mean_speedup,mean_tau
+Qwen3 8B base 1epoch,Baseline,1.0000,,1.0000,,1.0000,
+Qwen3 8B base 1epoch,Eagle3,2.0927,3.4024,2.1394,3.5800,2.1160,3.4912
+Qwen3 8B base 1epoch,Eagle3+SupervisedDepth,2.2224,3.0350,2.4416,3.3160,2.3320,3.1755

@@ -1,0 +1,40 @@
+{
+  "baseline_path": "/results/qwen3_14b/supervised_depth/validation/baseline/humaneval.jsonl",
+  "validation_question_file": "/results/qwen3_14b/supervised_depth/split_data/humaneval_val/question.jsonl",
+  "best_result": {
+    "checkpoint_path": "/results/qwen3_14b/supervised_depth/train_t10000_titan/supervised_depth_model_step_36.pt",
+    "checkpoint_step": 36,
+    "speedup": 2.0616534222322267,
+    "tau": 4.063044936284373,
+    "validation_draft_model_calls": 24416,
+    "validation_target_model_calls": 1903
+  },
+  "candidate_results": [
+    {
+      "checkpoint_path": "/results/qwen3_14b/supervised_depth/train_t10000_titan/supervised_depth_model_step_1.pt",
+      "checkpoint_step": 1,
+      "speedup": 2.037847531914004,
+      "tau": 4.069173942243117,
+      "validation_draft_model_calls": 24598,
+      "validation_target_model_calls": 1898
+    },
+    {
+      "checkpoint_path": "/results/qwen3_14b/supervised_depth/train_t10000_titan/supervised_depth_model_step_36.pt",
+      "checkpoint_step": 36,
+      "speedup": 2.0616534222322267,
+      "tau": 4.063044936284373,
+      "validation_draft_model_calls": 24416,
+      "validation_target_model_calls": 1903
+    },
+    {
+      "checkpoint_path": "/results/qwen3_14b/supervised_depth/train_t10000_titan/supervised_depth_model_best.pt",
+      "checkpoint_step": 0,
+      "speedup": 1.9043575103710035,
+      "tau": 4.063044936284373,
+      "validation_draft_model_calls": 24416,
+      "validation_target_model_calls": 1903
+    }
+  ],
+  "validation_metrics_log_path": "/results/qwen3_14b/supervised_depth/train_t10000_titan/validation_metrics.jsonl",
+  "promoted_checkpoint_path": "/results/qwen3_14b/supervised_depth/train_t10000_titan/supervised_depth_model.pt"
+}

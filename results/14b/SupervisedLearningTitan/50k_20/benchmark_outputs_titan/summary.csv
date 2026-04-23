@@ -1,0 +1,4 @@
+model,method,mt_bench_speedup,mt_bench_tau,gsm8k_speedup,gsm8k_tau,mean_speedup,mean_tau
+Qwen3 14B titan 20epochs,Baseline,1.0000,,1.0000,,1.0000,
+Qwen3 14B titan 20epochs,Eagle3,2.1124,3.2473,2.3015,3.6992,2.2070,3.4733
+Qwen3 14B titan 20epochs,Eagle3+SupervisedDepth,2.2852,3.2019,2.6410,3.7330,2.4631,3.4675

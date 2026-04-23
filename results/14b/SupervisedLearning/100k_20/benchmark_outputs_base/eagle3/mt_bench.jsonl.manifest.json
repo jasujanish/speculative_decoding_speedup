@@ -1,0 +1,6 @@
+{
+  "answer_file": "/results/qwen3_14b/supervised_depth/benchmark_outputs_base/eagle3/mt_bench.jsonl",
+  "question_count": 80,
+  "draft_model_calls": 174240,
+  "target_model_calls": 19360
+}

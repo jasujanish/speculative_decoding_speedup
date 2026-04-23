@@ -1,0 +1,4 @@
+model,method,mt_bench_speedup,mt_bench_tau,gsm8k_speedup,gsm8k_tau,alpaca_speedup,alpaca_tau,qa_speedup,qa_tau,mean_speedup,mean_tau
+Qwen3 14B,Baseline,1.0000,,1.0000,,1.0000,,1.0000,,1.0000,
+Qwen3 14B,Eagle3,2.0352,3.2473,2.3386,3.6992,1.7296,2.7497,1.5224,2.5382,1.9064,3.0586
+Qwen3 14B,Eagle3+LTD,2.2383,3.3569,2.5843,3.9405,1.8278,2.8426,1.6614,2.6085,2.0780,3.1871

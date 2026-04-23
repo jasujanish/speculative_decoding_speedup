@@ -1,0 +1,431 @@
+{
+  "stage_name": "iter0_size",
+  "policy_type": "size",
+  "baseline_path": "/results/qwen3_8b/iterative/validation/baseline/humaneval.jsonl",
+  "validation_question_file": "/results/qwen3_8b/iterative/split_data/humaneval_val/question.jsonl",
+  "fixed_depth_model_path": "",
+  "best_result": {
+    "checkpoint_path": "/results/qwen3_8b/iterative/iter0_size/ppo_speculative_decoder_controller_step_50000.zip",
+    "checkpoint_step": 50000,
+    "speedup": 2.33535660723611,
+    "tau": 4.0157849470301406,
+    "depth_sweep": [
+      {
+        "depth": 1.0,
+        "speedup": 2.403268960446875,
+        "tau": 4.015576323987539
+      },
+      {
+        "depth": 2.0,
+        "speedup": 2.4092526748711487,
+        "tau": 4.018079800498753
+      },
+      {
+        "depth": 3.0,
+        "speedup": 2.4234725200760217,
+        "tau": 4.015576323987539
+      },
+      {
+        "depth": 4.0,
+        "speedup": 2.400494906307057,
+        "tau": 4.015576323987539
+      },
+      {
+        "depth": 5.0,
+        "speedup": 2.3652012423013846,
+        "tau": 4.015576323987539
+      },
+      {
+        "depth": 6.0,
+        "speedup": 2.2878614833147912,
+        "tau": 4.015576323987539
+      },
+      {
+        "depth": 7.0,
+        "speedup": 2.3738792764056735,
+        "tau": 4.015576323987539
+      },
+      {
+        "depth": 8.0,
+        "speedup": 2.2234930455216295,
+        "tau": 4.015576323987539
+      },
+      {
+        "depth": 9.0,
+        "speedup": 2.3256482167708046,
+        "tau": 4.015576323987539
+      },
+      {
+        "depth": 10.0,
+        "speedup": 2.3403339201360094,
+        "tau": 4.015576323987539
+      },
+      {
+        "depth": 11.0,
+        "speedup": 2.2713137722055774,
+        "tau": 4.015576323987539
+      },
+      {
+        "depth": 12.0,
+        "speedup": 2.2000592684763434,
+        "tau": 4.015576323987539
+      }
+    ],
+    "validation_draft_model_calls": 218052,
+    "validation_target_model_calls": 24266
+  },
+  "candidate_results": [
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter0_size/ppo_speculative_decoder_controller_step_10000.zip",
+      "checkpoint_step": 10000,
+      "speedup": 2.2278443300484363,
+      "tau": 4.156825396825397,
+      "depth_sweep": [
+        {
+          "depth": 1.0,
+          "speedup": 2.185868914934312,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 2.0,
+          "speedup": 2.202849083031589,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 3.0,
+          "speedup": 2.2894570853470912,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 4.0,
+          "speedup": 2.242159167453398,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 5.0,
+          "speedup": 2.18111146680087,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 6.0,
+          "speedup": 2.2678183965313403,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 7.0,
+          "speedup": 2.2141558701206563,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 8.0,
+          "speedup": 2.292117152959602,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 9.0,
+          "speedup": 2.2797447746514887,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 10.0,
+          "speedup": 2.130109818117358,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 11.0,
+          "speedup": 2.204375478904566,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 12.0,
+          "speedup": 2.2443647517289627,
+          "tau": 4.156825396825397
+        }
+      ],
+      "validation_draft_model_calls": 212310,
+      "validation_target_model_calls": 23628
+    },
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter0_size/ppo_speculative_decoder_controller_step_20000.zip",
+      "checkpoint_step": 20000,
+      "speedup": 2.2777798772642948,
+      "tau": 4.15704547440888,
+      "depth_sweep": [
+        {
+          "depth": 1.0,
+          "speedup": 2.2776192553666545,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 2.0,
+          "speedup": 2.28220087449134,
+          "tau": 4.159466327827192
+        },
+        {
+          "depth": 3.0,
+          "speedup": 2.259803286188367,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 4.0,
+          "speedup": 2.296870874031373,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 5.0,
+          "speedup": 2.299312496994064,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 6.0,
+          "speedup": 2.304931727902154,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 7.0,
+          "speedup": 2.247107530360836,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 8.0,
+          "speedup": 2.27919146146637,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 9.0,
+          "speedup": 2.305830742600953,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 10.0,
+          "speedup": 2.255533309845742,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 11.0,
+          "speedup": 2.25332145140045,
+          "tau": 4.156825396825397
+        },
+        {
+          "depth": 12.0,
+          "speedup": 2.271635516523231,
+          "tau": 4.156825396825397
+        }
+      ],
+      "validation_draft_model_calls": 212301,
+      "validation_target_model_calls": 23627
+    },
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter0_size/ppo_speculative_decoder_controller_step_30000.zip",
+      "checkpoint_step": 30000,
+      "speedup": 2.2278086412329587,
+      "tau": 4.118150005201574,
+      "depth_sweep": [
+        {
+          "depth": 1.0,
+          "speedup": 2.301061211310271,
+          "tau": 4.11595131326073
+        },
+        {
+          "depth": 2.0,
+          "speedup": 2.2620438479791014,
+          "tau": 4.11595131326073
+        },
+        {
+          "depth": 3.0,
+          "speedup": 2.2973680455992205,
+          "tau": 4.118589743589744
+        },
+        {
+          "depth": 4.0,
+          "speedup": 2.205360532140975,
+          "tau": 4.118589743589744
+        },
+        {
+          "depth": 5.0,
+          "speedup": 2.1592110750817617,
+          "tau": 4.118589743589744
+        },
+        {
+          "depth": 6.0,
+          "speedup": 2.2761413005654143,
+          "tau": 4.118589743589744
+        },
+        {
+          "depth": 7.0,
+          "speedup": 2.299134774147269,
+          "tau": 4.118589743589744
+        },
+        {
+          "depth": 8.0,
+          "speedup": 2.3031686554454165,
+          "tau": 4.118589743589744
+        },
+        {
+          "depth": 9.0,
+          "speedup": 2.2896826904275116,
+          "tau": 4.118589743589744
+        },
+        {
+          "depth": 10.0,
+          "speedup": 2.1122590457791746,
+          "tau": 4.118589743589744
+        },
+        {
+          "depth": 11.0,
+          "speedup": 2.1280942464341033,
+          "tau": 4.118589743589744
+        },
+        {
+          "depth": 12.0,
+          "speedup": 2.1001782698852844,
+          "tau": 4.118589743589744
+        }
+      ],
+      "validation_draft_model_calls": 211356,
+      "validation_target_model_calls": 23522
+    },
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter0_size/ppo_speculative_decoder_controller_step_40000.zip",
+      "checkpoint_step": 40000,
+      "speedup": 2.210383949176882,
+      "tau": 4.027586206896552,
+      "depth_sweep": [
+        {
+          "depth": 1.0,
+          "speedup": 2.151650358575863,
+          "tau": 4.027586206896552
+        },
+        {
+          "depth": 2.0,
+          "speedup": 2.1898143547225954,
+          "tau": 4.027586206896552
+        },
+        {
+          "depth": 3.0,
+          "speedup": 2.196994233735874,
+          "tau": 4.027586206896552
+        },
+        {
+          "depth": 4.0,
+          "speedup": 2.2280165676570647,
+          "tau": 4.027586206896552
+        },
+        {
+          "depth": 5.0,
+          "speedup": 2.190775042400988,
+          "tau": 4.027586206896552
+        },
+        {
+          "depth": 6.0,
+          "speedup": 2.2382420297827195,
+          "tau": 4.027586206896552
+        },
+        {
+          "depth": 7.0,
+          "speedup": 2.2193133248804204,
+          "tau": 4.027586206896552
+        },
+        {
+          "depth": 8.0,
+          "speedup": 2.109560010061712,
+          "tau": 4.027586206896552
+        },
+        {
+          "depth": 9.0,
+          "speedup": 2.1695932673652742,
+          "tau": 4.027586206896552
+        },
+        {
+          "depth": 10.0,
+          "speedup": 2.174975744289337,
+          "tau": 4.027586206896552
+        },
+        {
+          "depth": 11.0,
+          "speedup": 2.1941886182680443,
+          "tau": 4.027586206896552
+        },
+        {
+          "depth": 12.0,
+          "speedup": 2.461483838382692,
+          "tau": 4.027586206896552
+        }
+      ],
+      "validation_draft_model_calls": 218223,
+      "validation_target_model_calls": 24285
+    },
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter0_size/ppo_speculative_decoder_controller_step_50000.zip",
+      "checkpoint_step": 50000,
+      "speedup": 2.33535660723611,
+      "tau": 4.0157849470301406,
+      "depth_sweep": [
+        {
+          "depth": 1.0,
+          "speedup": 2.403268960446875,
+          "tau": 4.015576323987539
+        },
+        {
+          "depth": 2.0,
+          "speedup": 2.4092526748711487,
+          "tau": 4.018079800498753
+        },
+        {
+          "depth": 3.0,
+          "speedup": 2.4234725200760217,
+          "tau": 4.015576323987539
+        },
+        {
+          "depth": 4.0,
+          "speedup": 2.400494906307057,
+          "tau": 4.015576323987539
+        },
+        {
+          "depth": 5.0,
+          "speedup": 2.3652012423013846,
+          "tau": 4.015576323987539
+        },
+        {
+          "depth": 6.0,
+          "speedup": 2.2878614833147912,
+          "tau": 4.015576323987539
+        },
+        {
+          "depth": 7.0,
+          "speedup": 2.3738792764056735,
+          "tau": 4.015576323987539
+        },
+        {
+          "depth": 8.0,
+          "speedup": 2.2234930455216295,
+          "tau": 4.015576323987539
+        },
+        {
+          "depth": 9.0,
+          "speedup": 2.3256482167708046,
+          "tau": 4.015576323987539
+        },
+        {
+          "depth": 10.0,
+          "speedup": 2.3403339201360094,
+          "tau": 4.015576323987539
+        },
+        {
+          "depth": 11.0,
+          "speedup": 2.2713137722055774,
+          "tau": 4.015576323987539
+        },
+        {
+          "depth": 12.0,
+          "speedup": 2.2000592684763434,
+          "tau": 4.015576323987539
+        }
+      ],
+      "validation_draft_model_calls": 218052,
+      "validation_target_model_calls": 24266
+    }
+  ],
+  "validation_metrics_log_path": "/results/qwen3_8b/iterative/iter0_size/validation_metrics.jsonl",
+  "promoted_checkpoint_path": "/results/qwen3_8b/iterative/iter0_size/ppo_speculative_decoder_controller_rebuttal.zip"
+}

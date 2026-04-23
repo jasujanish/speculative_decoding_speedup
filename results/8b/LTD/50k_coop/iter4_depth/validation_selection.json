@@ -1,0 +1,59 @@
+{
+  "stage_name": "iter4_depth",
+  "policy_type": "depth",
+  "baseline_path": "/results/qwen3_8b/iterative/validation/baseline/humaneval.jsonl",
+  "validation_question_file": "/results/qwen3_8b/iterative/split_data/humaneval_val/question.jsonl",
+  "fixed_token_model_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_rebuttal.zip",
+  "best_result": {
+    "checkpoint_path": "/results/qwen3_8b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_30000.zip",
+    "checkpoint_step": 30000,
+    "speedup": 2.2228177472083965,
+    "tau": 4.0056390977443606,
+    "validation_draft_model_calls": 12630,
+    "validation_target_model_calls": 2032
+  },
+  "candidate_results": [
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_10000.zip",
+      "checkpoint_step": 10000,
+      "speedup": 2.212012443734692,
+      "tau": 4.014447236180905,
+      "validation_draft_model_calls": 12125,
+      "validation_target_model_calls": 2019
+    },
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_20000.zip",
+      "checkpoint_step": 20000,
+      "speedup": 2.2225527810471872,
+      "tau": 3.965009208103131,
+      "validation_draft_model_calls": 11772,
+      "validation_target_model_calls": 2059
+    },
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_30000.zip",
+      "checkpoint_step": 30000,
+      "speedup": 2.2228177472083965,
+      "tau": 4.0056390977443606,
+      "validation_draft_model_calls": 12630,
+      "validation_target_model_calls": 2032
+    },
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_40000.zip",
+      "checkpoint_step": 40000,
+      "speedup": 2.1721379607485605,
+      "tau": 4.0402262727844125,
+      "validation_draft_model_calls": 13714,
+      "validation_target_model_calls": 2027
+    },
+    {
+      "checkpoint_path": "/results/qwen3_8b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_50000.zip",
+      "checkpoint_step": 50000,
+      "speedup": 2.1950689669076673,
+      "tau": 4.022514071294559,
+      "validation_draft_model_calls": 13686,
+      "validation_target_model_calls": 2035
+    }
+  ],
+  "validation_metrics_log_path": "/results/qwen3_8b/iterative/iter4_depth/validation_metrics.jsonl",
+  "promoted_checkpoint_path": "/results/qwen3_8b/iterative/iter4_depth/ppo_speculative_decoder_controller_v1_single_action.zip"
+}

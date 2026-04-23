@@ -1,0 +1,1 @@
+{"event": "summary", "stage_name": "iter4_depth", "phase_type": "depth", "total_timesteps": 10000, "total_time_seconds": 281.728068113327, "training_time_seconds": 177.39235305786133, "validation_time_seconds": 104.3357150554657, "training_flops": 103381014630400, "validation_flops": 92546371840000, "total_flops": 195927386470400}
