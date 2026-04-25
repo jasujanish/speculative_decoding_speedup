@@ -12,6 +12,7 @@
 # LTD notes:
 #   - A co-op / not-coop pair shares one iterative training (6 PPO stages).
 #   - co-op uses iter3_size + iter4_depth, not-coop uses iter0_size + iter0_depth.
+#   - co-op saves cumulative timing across all 6 stages before the volume wipe.
 #
 # Supervised notes:
 #   - Per (model, variant) the dataset is collected once and reused between
@@ -72,6 +73,87 @@ train_done_sup() {
   local train_subdir="$2"
   modal volume ls ltd-qwen3-results "$preset/supervised_depth/$train_subdir" 2>/dev/null \
     | grep -q "supervised_depth_model.pt"
+}
+
+write_ltd_cumulative_summary() {
+  local iterative_dir="$1"
+  local output_path="$2"
+
+  python - "$iterative_dir" "$output_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+iterative_dir = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+stage_names = [
+    "iter0_size",
+    "iter0_depth",
+    "iter1_size",
+    "iter2_depth",
+    "iter3_size",
+    "iter4_depth",
+]
+summary_keys = [
+    "training_time_seconds",
+    "validation_time_seconds",
+    "training_flops",
+    "validation_flops",
+]
+manifest_keys = [
+    "training_target_model_calls",
+    "training_draft_model_calls",
+    "validation_target_model_calls",
+    "validation_draft_model_calls",
+]
+summary = {
+    "event": "cumulative_summary",
+    "stage_names": stage_names,
+    "stage_count": len(stage_names),
+}
+
+for key in summary_keys + manifest_keys:
+    summary[key] = 0.0
+
+for stage_name in stage_names:
+    stage_dir = iterative_dir / stage_name
+    time_path = stage_dir / "time_summary.jsonl"
+    manifest_path = stage_dir / "dataset_manifest.json"
+    if not time_path.exists():
+        raise SystemExit(f"Missing LTD time summary: {time_path}")
+    if not manifest_path.exists():
+        raise SystemExit(f"Missing LTD manifest: {manifest_path}")
+
+    with time_path.open("r", encoding="utf-8") as handle:
+        time_record = json.loads(handle.readline())
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+
+    for key in summary_keys:
+        summary[key] += float(time_record.get(key, 0.0))
+    for key in manifest_keys:
+        summary[key] += float(manifest.get(key, 0.0))
+
+summary["total_time_seconds"] = (
+    summary["training_time_seconds"] + summary["validation_time_seconds"]
+)
+summary["total_target_model_calls"] = (
+    summary["training_target_model_calls"] + summary["validation_target_model_calls"]
+)
+summary["total_draft_model_calls"] = (
+    summary["training_draft_model_calls"] + summary["validation_draft_model_calls"]
+)
+summary["total_flops"] = summary["training_flops"] + summary["validation_flops"]
+
+for key, value in list(summary.items()):
+    if isinstance(value, float) and value.is_integer():
+        summary[key] = int(value)
+
+output_path.parent.mkdir(parents=True, exist_ok=True)
+with output_path.open("w", encoding="utf-8") as handle:
+    handle.write(json.dumps(summary))
+    handle.write("\n")
+PY
 }
 
 # --- LTD (one pair = one training + two benchmarks) ------------------------
@@ -153,6 +235,9 @@ run_ltd_ablation() {
   cp -r "$staging/iterative/iter3_size"  "$coop_dir/"
   cp -r "$staging/iterative/iter4_depth" "$coop_dir/"
   cp -r "$staging/benchmark_outputs"     "$coop_dir/"
+  write_ltd_cumulative_summary \
+    "$staging/iterative" \
+    "$coop_dir/cumulative_time_summary.jsonl"
   cp -r "$staging/iterative/iter0_size"              "$notcoop_dir/"
   cp -r "$staging/iterative/iter0_depth"             "$notcoop_dir/"
   cp -r "$staging/iterative/benchmark_outputs_iter0" "$notcoop_dir/"
