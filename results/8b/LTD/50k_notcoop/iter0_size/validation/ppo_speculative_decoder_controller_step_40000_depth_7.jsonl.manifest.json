@@ -1,6 +1,6 @@
 {
   "answer_file": "/results/qwen3_8b/iterative/iter0_size/validation/ppo_speculative_decoder_controller_step_40000_depth_7.jsonl",
   "question_count": 16,
-  "draft_model_calls": 18233,
-  "target_model_calls": 2028
+  "draft_model_calls": 18053,
+  "target_model_calls": 2008
 }

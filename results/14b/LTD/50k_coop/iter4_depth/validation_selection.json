@@ -5,53 +5,53 @@
   "validation_question_file": "/results/qwen3_14b/iterative/split_data/humaneval_val/question.jsonl",
   "fixed_token_model_path": "/results/qwen3_14b/iterative/iter3_size/ppo_speculative_decoder_controller_rebuttal.zip",
   "best_result": {
-    "checkpoint_path": "/results/qwen3_14b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_40000.zip",
-    "checkpoint_step": 40000,
-    "speedup": 2.224234872473117,
-    "tau": 4.126865671641791,
-    "validation_draft_model_calls": 10222,
-    "validation_target_model_calls": 1979
+    "checkpoint_path": "/results/qwen3_14b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_20000.zip",
+    "checkpoint_step": 20000,
+    "speedup": 3.0944471141464844,
+    "tau": 4.15832762165867,
+    "validation_draft_model_calls": 10741,
+    "validation_target_model_calls": 1946
   },
   "candidate_results": [
     {
       "checkpoint_path": "/results/qwen3_14b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_10000.zip",
       "checkpoint_step": 10000,
-      "speedup": 2.1907621402153015,
-      "tau": 4.149965916837083,
-      "validation_draft_model_calls": 10305,
-      "validation_target_model_calls": 1957
+      "speedup": 2.9803290525617716,
+      "tau": 4.163923182441701,
+      "validation_draft_model_calls": 11232,
+      "validation_target_model_calls": 1945
     },
     {
       "checkpoint_path": "/results/qwen3_14b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_20000.zip",
       "checkpoint_step": 20000,
-      "speedup": 2.0258094429313855,
-      "tau": 4.181943487250172,
-      "validation_draft_model_calls": 10514,
-      "validation_target_model_calls": 1941
+      "speedup": 3.0944471141464844,
+      "tau": 4.15832762165867,
+      "validation_draft_model_calls": 10741,
+      "validation_target_model_calls": 1946
     },
     {
       "checkpoint_path": "/results/qwen3_14b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_30000.zip",
       "checkpoint_step": 30000,
-      "speedup": 2.2240884719223315,
-      "tau": 4.131614654002714,
-      "validation_draft_model_calls": 9880,
-      "validation_target_model_calls": 1964
+      "speedup": 3.0858103960469263,
+      "tau": 4.16162310866575,
+      "validation_draft_model_calls": 11060,
+      "validation_target_model_calls": 1953
     },
     {
       "checkpoint_path": "/results/qwen3_14b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_40000.zip",
       "checkpoint_step": 40000,
-      "speedup": 2.224234872473117,
-      "tau": 4.126865671641791,
-      "validation_draft_model_calls": 10222,
-      "validation_target_model_calls": 1979
+      "speedup": 3.076619002708956,
+      "tau": 4.172413793103448,
+      "validation_draft_model_calls": 10690,
+      "validation_target_model_calls": 1946
     },
     {
       "checkpoint_path": "/results/qwen3_14b/iterative/iter4_depth/ppo_speculative_decoder_controller_step_50000.zip",
       "checkpoint_step": 50000,
-      "speedup": 2.1810328426788654,
-      "tau": 4.171821305841925,
-      "validation_draft_model_calls": 10314,
-      "validation_target_model_calls": 1945
+      "speedup": 2.999011028395632,
+      "tau": 4.157103825136612,
+      "validation_draft_model_calls": 10869,
+      "validation_target_model_calls": 1951
     }
   ],
   "validation_metrics_log_path": "/results/qwen3_14b/iterative/iter4_depth/validation_metrics.jsonl",

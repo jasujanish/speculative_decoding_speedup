@@ -7,19 +7,19 @@
   "best_result": {
     "checkpoint_path": "/results/qwen3_14b/iterative/iter0_depth/ppo_speculative_decoder_controller_step_10000.zip",
     "checkpoint_step": 10000,
-    "speedup": 2.7662919229993594,
-    "tau": 4.074646940147949,
-    "validation_draft_model_calls": 13061,
-    "validation_target_model_calls": 2004
+    "speedup": 2.8839447861738914,
+    "tau": 4.015241882041087,
+    "validation_draft_model_calls": 10959,
+    "validation_target_model_calls": 2035
   },
   "candidate_results": [
     {
       "checkpoint_path": "/results/qwen3_14b/iterative/iter0_depth/ppo_speculative_decoder_controller_step_10000.zip",
       "checkpoint_step": 10000,
-      "speedup": 2.7662919229993594,
-      "tau": 4.074646940147949,
-      "validation_draft_model_calls": 13061,
-      "validation_target_model_calls": 2004
+      "speedup": 2.8839447861738914,
+      "tau": 4.015241882041087,
+      "validation_draft_model_calls": 10959,
+      "validation_target_model_calls": 2035
     }
   ],
   "validation_metrics_log_path": "/results/qwen3_14b/iterative/iter0_depth/validation_metrics.jsonl",

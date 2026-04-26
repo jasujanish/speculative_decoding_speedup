@@ -1,4 +1,4 @@
-model,method,mt_bench_speedup,mt_bench_tau,gsm8k_speedup,gsm8k_tau,alpaca_speedup,alpaca_tau,qa_speedup,qa_tau,mean_speedup,mean_tau
-Qwen3 14B iter0,Baseline,1.0000,,1.0000,,1.0000,,1.0000,,1.0000,
-Qwen3 14B iter0,Eagle3,2.0103,3.2473,2.2874,3.6992,1.7072,2.7497,1.5123,2.5382,1.8793,3.0586
-Qwen3 14B iter0,Eagle3+LTD,1.8043,3.3714,2.3891,3.9581,1.7220,2.8434,1.5190,2.6152,1.8586,3.1970
+model,method,mt_bench_speedup,mt_bench_tau,gsm8k_speedup,gsm8k_tau,mean_speedup,mean_tau
+Qwen3 14B iter0,Baseline,1.0000,,1.0000,,1.0000,
+Qwen3 14B iter0,Eagle3,1.9229,3.2473,2.2458,3.6992,2.0843,3.4733
+Qwen3 14B iter0,Eagle3+LTD,2.1756,3.4025,2.3385,3.9129,2.2570,3.6577

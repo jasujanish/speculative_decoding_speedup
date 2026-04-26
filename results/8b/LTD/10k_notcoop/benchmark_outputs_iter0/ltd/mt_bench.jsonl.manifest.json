@@ -1,6 +1,6 @@
 {
   "answer_file": "/results/qwen3_8b/iterative/benchmark_outputs_iter0/ltd/mt_bench.jsonl",
   "question_count": 80,
-  "draft_model_calls": 104437,
-  "target_model_calls": 16922
+  "draft_model_calls": 175908,
+  "target_model_calls": 16930
 }

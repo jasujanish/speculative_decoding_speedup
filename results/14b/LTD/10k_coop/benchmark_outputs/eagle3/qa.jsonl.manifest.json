@@ -1,6 +1,0 @@
-{
-  "answer_file": "/results/qwen3_14b/iterative/benchmark_outputs/eagle3/qa.jsonl",
-  "question_count": 80,
-  "draft_model_calls": 77427,
-  "target_model_calls": 8603
-}

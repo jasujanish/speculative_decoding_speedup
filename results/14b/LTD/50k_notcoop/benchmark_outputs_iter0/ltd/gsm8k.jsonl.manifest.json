@@ -1,6 +1,6 @@
 {
   "answer_file": "/results/qwen3_14b/iterative/benchmark_outputs_iter0/ltd/gsm8k.jsonl",
   "question_count": 80,
-  "draft_model_calls": 33355,
-  "target_model_calls": 5817
+  "draft_model_calls": 36840,
+  "target_model_calls": 5714
 }

@@ -1,0 +1,1 @@
+{"event": "summary", "stage_name": "iter1_size", "phase_type": "size", "total_timesteps": 10000, "total_time_seconds": 635.1467573642731, "training_time_seconds": 531.8114767074585, "validation_time_seconds": 103.33528065681458, "training_flops": 401129309542400, "validation_flops": 86940897126400, "total_flops": 488070206668800}

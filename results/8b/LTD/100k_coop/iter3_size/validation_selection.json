@@ -5,93 +5,93 @@
   "validation_question_file": "/results/qwen3_8b/iterative/split_data/humaneval_val/question.jsonl",
   "fixed_depth_model_path": "/results/qwen3_8b/iterative/iter2_depth/ppo_speculative_decoder_controller_v1_single_action.zip",
   "best_result": {
-    "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_60000.zip",
-    "checkpoint_step": 60000,
-    "speedup": 3.660411538225854,
-    "tau": 3.9593345656192236,
-    "validation_draft_model_calls": 11562,
-    "validation_target_model_calls": 2056
+    "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_20000.zip",
+    "checkpoint_step": 20000,
+    "speedup": 2.529717650285145,
+    "tau": 4.007523510971787,
+    "validation_draft_model_calls": 10976,
+    "validation_target_model_calls": 2016
   },
   "candidate_results": [
     {
       "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_10000.zip",
       "checkpoint_step": 10000,
-      "speedup": 3.461842021973834,
-      "tau": 4.013741411617739,
-      "validation_draft_model_calls": 11411,
-      "validation_target_model_calls": 2034
+      "speedup": 2.423345786068637,
+      "tau": 3.955665024630542,
+      "validation_draft_model_calls": 11218,
+      "validation_target_model_calls": 2054
     },
     {
       "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_20000.zip",
       "checkpoint_step": 20000,
-      "speedup": 3.4781859488328117,
-      "tau": 4.006234413965087,
-      "validation_draft_model_calls": 11411,
-      "validation_target_model_calls": 2025
+      "speedup": 2.529717650285145,
+      "tau": 4.007523510971787,
+      "validation_draft_model_calls": 10976,
+      "validation_target_model_calls": 2016
     },
     {
       "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_30000.zip",
       "checkpoint_step": 30000,
-      "speedup": 3.370063325077874,
-      "tau": 3.9813200498132004,
-      "validation_draft_model_calls": 11443,
-      "validation_target_model_calls": 2033
+      "speedup": 2.5010172912998945,
+      "tau": 3.94636251541307,
+      "validation_draft_model_calls": 11258,
+      "validation_target_model_calls": 2055
     },
     {
       "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_40000.zip",
       "checkpoint_step": 40000,
-      "speedup": 3.4502789408275705,
-      "tau": 3.9593345656192236,
-      "validation_draft_model_calls": 11559,
-      "validation_target_model_calls": 2056
+      "speedup": 2.4960071683342093,
+      "tau": 3.94636251541307,
+      "validation_draft_model_calls": 11258,
+      "validation_target_model_calls": 2055
     },
     {
       "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_50000.zip",
       "checkpoint_step": 50000,
-      "speedup": 3.6376437709038925,
-      "tau": 3.9593345656192236,
-      "validation_draft_model_calls": 11559,
-      "validation_target_model_calls": 2056
+      "speedup": 2.4463303665673033,
+      "tau": 3.94636251541307,
+      "validation_draft_model_calls": 11264,
+      "validation_target_model_calls": 2055
     },
     {
       "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_60000.zip",
       "checkpoint_step": 60000,
-      "speedup": 3.660411538225854,
-      "tau": 3.9593345656192236,
-      "validation_draft_model_calls": 11562,
-      "validation_target_model_calls": 2056
+      "speedup": 2.4794951921718744,
+      "tau": 3.94636251541307,
+      "validation_draft_model_calls": 11258,
+      "validation_target_model_calls": 2055
     },
     {
       "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_70000.zip",
       "checkpoint_step": 70000,
-      "speedup": 3.6296574034835314,
-      "tau": 3.9593345656192236,
-      "validation_draft_model_calls": 11559,
-      "validation_target_model_calls": 2056
+      "speedup": 2.500429791996603,
+      "tau": 3.953617810760668,
+      "validation_draft_model_calls": 11250,
+      "validation_target_model_calls": 2050
     },
     {
       "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_80000.zip",
       "checkpoint_step": 80000,
-      "speedup": 3.642329717778373,
-      "tau": 3.9593345656192236,
-      "validation_draft_model_calls": 11559,
-      "validation_target_model_calls": 2056
+      "speedup": 2.4583099829174193,
+      "tau": 3.939950980392157,
+      "validation_draft_model_calls": 11283,
+      "validation_target_model_calls": 2062
     },
     {
       "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_90000.zip",
       "checkpoint_step": 90000,
-      "speedup": 3.476741401317862,
-      "tau": 3.9593345656192236,
-      "validation_draft_model_calls": 11559,
-      "validation_target_model_calls": 2056
+      "speedup": 2.4103349264458975,
+      "tau": 3.9447852760736195,
+      "validation_draft_model_calls": 11299,
+      "validation_target_model_calls": 2066
     },
     {
       "checkpoint_path": "/results/qwen3_8b/iterative/iter3_size/ppo_speculative_decoder_controller_step_100000.zip",
       "checkpoint_step": 100000,
-      "speedup": 3.619126680676662,
-      "tau": 3.956896551724138,
-      "validation_draft_model_calls": 11581,
-      "validation_target_model_calls": 2057
+      "speedup": 2.4612884239125803,
+      "tau": 3.942366646229307,
+      "validation_draft_model_calls": 11270,
+      "validation_target_model_calls": 2061
     }
   ],
   "validation_metrics_log_path": "/results/qwen3_8b/iterative/iter3_size/validation_metrics.jsonl",

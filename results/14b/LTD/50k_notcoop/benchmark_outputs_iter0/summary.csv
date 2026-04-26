@@ -1,4 +1,4 @@
 model,method,mt_bench_speedup,mt_bench_tau,gsm8k_speedup,gsm8k_tau,mean_speedup,mean_tau
 Qwen3 14B iter0,Baseline,1.0000,,1.0000,,1.0000,
-Qwen3 14B iter0,Eagle3,2.1034,3.2473,2.1485,3.6992,2.1259,3.4733
-Qwen3 14B iter0,Eagle3+LTD,2.3646,3.3449,2.6040,3.9325,2.4843,3.6387
+Qwen3 14B iter0,Eagle3,2.0545,3.2473,2.4992,3.6992,2.2768,3.4733
+Qwen3 14B iter0,Eagle3+LTD,2.2004,3.4399,2.7974,3.9865,2.4989,3.7132
