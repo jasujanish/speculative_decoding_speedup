@@ -1,0 +1,36 @@
+Mean Results
+
+Comparison rule: each 20-epoch SupervisedLearning or SupervisedLearningTitan row is matched to the same model and step-budget LTD row.
+Percent change formula: (comparison - LTD) / LTD * 100. Positive means the comparison value is higher than LTD.
+
+LTD (co-op) to Base (20 epochs)
+Matched rows: 6
+time: 85.26% reduction (-85.26%)
+speedup: 4.54% reduction (-4.54%)
+drafter calls: 93.68% reduction (-93.68%)
+target calls: 80.17% reduction (-80.17%)
+approximate flops: 85.91% reduction (-85.91%)
+
+LTD (no co-op) to Base (20 epochs)
+Matched rows: 6
+time: 74.77% reduction (-74.77%)
+speedup: 4.04% reduction (-4.04%)
+drafter calls: 89.99% reduction (-89.99%)
+target calls: 64.43% reduction (-64.43%)
+approximate flops: 76.05% reduction (-76.05%)
+
+LTD (co-op) to Titan (20 epochs)
+Matched rows: 6
+time: 87.16% reduction (-87.16%)
+speedup: 0.15% increase (+0.15%)
+drafter calls: 94.88% reduction (-94.88%)
+target calls: 80.36% reduction (-80.36%)
+approximate flops: 86.55% reduction (-86.55%)
+
+LTD (no co-op) to Titan (20 epochs)
+Matched rows: 6
+time: 78.02% reduction (-78.02%)
+speedup: 0.67% increase (+0.67%)
+drafter calls: 92.06% reduction (-92.06%)
+target calls: 64.78% reduction (-64.78%)
+approximate flops: 77.15% reduction (-77.15%)
