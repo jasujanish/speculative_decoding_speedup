@@ -1,33 +1,20 @@
 #!/usr/bin/env bash
-# Resumable fire-and-forget script for LTD ablations.
+# Nish's LTD ablations. Billing: MODAL_PROFILE=nish.
 #
-# Each ablation does:
-#   1. Six PPO stages: iter0_size, iter0_depth, iter1_size, iter2_depth,
-#      iter3_size, iter4_depth.
-#   2. Two benchmark-suite runs: co-op (iter3/iter4) and not co-op (iter0/iter0).
-#   3. Download results into results/<label>/LTD/<tk>_{coop,notcoop}/.
-#   4. Save a cumulative co-op timing summary across all six PPO stages.
-#   5. Prune *.zip PPO policy files locally to stay lightweight.
-#   6. Wipe the Modal volume and drop a sentinel file so re-runs skip this ablation.
+# Before running, add Nish's token to ~/.modal.toml:
+#   [nish]
+#   token_id = "ak-..."
+#   token_secret = "as-..."
+#   active = false
 #
-# Resume behavior:
-#   - A sentinel at results/<label>/LTD/.<tk>.done marks a fully completed ablation
-#     and causes the ablation to be skipped on re-run.
-#   - If no sentinel, each step (per-stage train, per-benchmark) is re-checked
-#     against the Modal volume via `modal volume ls` and skipped if already done.
-#   - To force-redo an ablation: delete the sentinel AND `modal volume rm -r`
-#     the preset's iterative + benchmark_outputs paths.
-#
-# Run in screen/tmux:
-#   screen -S ltd
-#   bash run_ltd_ablations.sh
-#   # Ctrl-A D to detach
+# Assignment: 8b 10k  (co-op + not co-op)
 
 set -euo pipefail
+export MODAL_PROFILE=nish
 
 REPO_ROOT=/home/acheong/Documents/s/mls/speculative_decoding_speedup
 RESULTS_ROOT="$REPO_ROOT/results"
-LOG="$REPO_ROOT/ltd_ablations.log"
+LOG="$REPO_ROOT/scripts/nish/ltd.log"
 
 cd "$REPO_ROOT"
 source .venv/modal/bin/activate
@@ -36,11 +23,12 @@ cd Learning-to-Draft-main
 exec > >(tee -a "$LOG") 2>&1
 
 echo "############################################################"
-echo "# LTD ablations started at $(date -Iseconds)"
+echo "# Nish LTD ablations started at $(date -Iseconds)"
+echo "# MODAL_PROFILE=$MODAL_PROFILE"
 echo "############################################################"
 
-# Returns 0 if the canonical promoted checkpoint for a stage already exists on
-# the Modal volume, meaning that stage has completed successfully.
+modal profile list || true
+
 stage_done() {
   local preset="$1"
   local stage="$2"
@@ -54,7 +42,6 @@ stage_done() {
     | grep -q "$canonical"
 }
 
-# Returns 0 if benchmark-suite has produced summary.csv at the given remote path.
 benchmark_done() {
   local remote_path="$1"
   modal volume ls ltd-qwen3-results "$remote_path" 2>/dev/null \
@@ -143,31 +130,30 @@ PY
 }
 
 run_ltd_ablation() {
-  local preset="$1"       # qwen3_8b | qwen3_14b
-  local label="$2"        # 8b | 14b
-  local timesteps="$3"    # 10000 | 100000
-  local tk_label="$4"     # 10k | 100k
-  local model_label="$5"  # "Qwen3 8B" | "Qwen3 14B"
+  local preset="$1"
+  local label="$2"
+  local timesteps="$3"
+  local tk_label="$4"
+  local model_label="$5"
 
   local coop_dir="$RESULTS_ROOT/${label}/LTD/${tk_label}_coop"
   local notcoop_dir="$RESULTS_ROOT/${label}/LTD/${tk_label}_notcoop"
-  local staging="$REPO_ROOT/.ltd_staging_${label}_${tk_label}"
+  local staging="$REPO_ROOT/.ltd_staging_nish_${label}_${tk_label}"
   local sentinel="$RESULTS_ROOT/${label}/LTD/.${tk_label}.done"
 
   echo ""
   echo "=========================================================="
-  echo "=== [$(date -Iseconds)] LTD $label $tk_label"
+  echo "=== [$(date -Iseconds)] LTD $label $tk_label (Nish)"
   echo "=========================================================="
 
   if [[ -f "$sentinel" ]]; then
-    echo "Sentinel $sentinel exists -> already complete, skipping."
+    echo "Sentinel exists -> skipping."
     return 0
   fi
 
-  # Six PPO stages, in order. Skip any already complete on the volume.
   for stage in iter0_size iter0_depth iter1_size iter2_depth iter3_size iter4_depth; do
     if stage_done "$preset" "$stage"; then
-      echo "--- [$(date -Iseconds)] stage=$stage already complete, skipping ---"
+      echo "--- stage $stage already done ---"
       continue
     fi
     echo "--- [$(date -Iseconds)] stage=$stage preset=$preset timesteps=$timesteps ---"
@@ -177,50 +163,53 @@ run_ltd_ablation() {
       --current-stage "$stage" \
       --size-total-timesteps "$timesteps" \
       --depth-total-timesteps "$timesteps" \
-      --batch-size 256 \
-      --n-steps 2048 \
-      --lr 0.001 \
-      --validation-fraction 0.2 \
-      --split-seed 42
+      --batch-size 256 --n-steps 2048 --lr 0.001 \
+      --validation-fraction 0.2 --split-seed 42
   done
 
   if benchmark_done "$preset/iterative/benchmark_outputs"; then
-    echo "--- [$(date -Iseconds)] co-op benchmark already done, skipping ---"
+    echo "--- co-op benchmark already done ---"
   else
-    echo "--- [$(date -Iseconds)] benchmark co-optimized (iter3/iter4) ---"
+    echo "--- [$(date -Iseconds)] benchmark co-op ---"
     modal run modal_qwen3.py \
-      --action benchmark-suite \
-      --model-preset "$preset" \
+      --action benchmark-suite --model-preset "$preset" \
       --token-model-path "$preset/iterative/iter3_size/ppo_speculative_decoder_controller_rebuttal.zip" \
       --depth-model-path "$preset/iterative/iter4_depth/ppo_speculative_decoder_controller_v1_single_action.zip" \
       --model-label "$model_label"
   fi
 
   if benchmark_done "$preset/iterative/benchmark_outputs_iter0"; then
-    echo "--- [$(date -Iseconds)] not-coop benchmark already done, skipping ---"
+    echo "--- not-coop benchmark already done ---"
   else
-    echo "--- [$(date -Iseconds)] benchmark not co-optimized (iter0/iter0) ---"
+    echo "--- [$(date -Iseconds)] benchmark not co-op ---"
     modal run modal_qwen3.py \
-      --action benchmark-suite \
-      --model-preset "$preset" \
+      --action benchmark-suite --model-preset "$preset" \
       --token-model-path "$preset/iterative/iter0_size/ppo_speculative_decoder_controller_rebuttal.zip" \
       --depth-model-path "$preset/iterative/iter0_depth/ppo_speculative_decoder_controller_v1_single_action.zip" \
       --output-subdir "$preset/iterative/benchmark_outputs_iter0" \
       --model-label "$model_label iter0"
   fi
 
-  # Pull everything down to a staging directory, then reorganize into Nish's
-  # folder layout. Co-op keeps final artifacts plus a cumulative timing summary
-  # for all six stages; not-coop keeps the iter0 artifacts it actually uses.
-  echo "--- [$(date -Iseconds)] downloading results ---"
+  echo "--- [$(date -Iseconds)] downloading ---"
   rm -rf "$staging"
   mkdir -p "$staging"
-  modal volume get ltd-qwen3-results "$preset/iterative" "$staging/"
+  local attempt
+  for attempt in 1 2 3; do
+    if modal volume get ltd-qwen3-results "$preset/iterative" "$staging/"; then
+      break
+    fi
+    echo "--- download attempt $attempt failed, retrying in 30s ---"
+    sleep 30
+    rm -rf "$staging"
+    mkdir -p "$staging"
+  done
 
   rm -rf "$coop_dir" "$notcoop_dir"
   mkdir -p "$coop_dir" "$notcoop_dir"
   mkdir -p "$(dirname "$sentinel")"
 
+  cp -r "$staging/iterative/iter1_size"          "$coop_dir/"
+  cp -r "$staging/iterative/iter2_depth"         "$coop_dir/"
   cp -r "$staging/iterative/iter3_size"          "$coop_dir/"
   cp -r "$staging/iterative/iter4_depth"         "$coop_dir/"
   cp -r "$staging/iterative/benchmark_outputs"   "$coop_dir/"
@@ -232,29 +221,21 @@ run_ltd_ablation() {
   cp -r "$staging/iterative/iter0_depth"             "$notcoop_dir/"
   cp -r "$staging/iterative/benchmark_outputs_iter0" "$notcoop_dir/"
 
-  # Drop PPO policy zips to keep local copy lightweight. JSON/JSONL metrics stay.
-  echo "--- [$(date -Iseconds)] pruning *.zip policy files from local results ---"
   find "$coop_dir" "$notcoop_dir" -type f -name "*.zip" -delete
-
   rm -rf "$staging"
 
-  # Write sentinel BEFORE wiping modal so a crash in the wipe window doesn't
-  # cause the ablation to re-train from scratch on the next invocation.
   mkdir -p "$(dirname "$sentinel")"
   date -Iseconds > "$sentinel"
 
-  echo "--- [$(date -Iseconds)] wiping modal volume for $preset ---"
+  echo "--- wiping modal volume for $preset LTD paths ---"
   modal volume rm -r ltd-qwen3-results "$preset/iterative" || true
-  echo "=== [$(date -Iseconds)] DONE LTD $label $tk_label (sentinel: $sentinel) ==="
+
+  echo "=== [$(date -Iseconds)] DONE LTD $label $tk_label ==="
 }
 
-# Edit this list to change the ablations this script runs.
-# Args: <preset> <label> <timesteps> <tk_label> "<model_label>"
-run_ltd_ablation qwen3_14b 14b 10000  10k  "Qwen3 14B"
-run_ltd_ablation qwen3_8b  8b  100000 100k "Qwen3 8B"
-run_ltd_ablation qwen3_14b 14b 100000 100k "Qwen3 14B"
+run_ltd_ablation qwen3_8b 8b 10000 10k "Qwen3 8B"
 
 echo ""
 echo "############################################################"
-echo "# ALL LTD ABLATIONS COMPLETE at $(date -Iseconds)"
+echo "# Nish LTD ABLATIONS COMPLETE at $(date -Iseconds)"
 echo "############################################################"
